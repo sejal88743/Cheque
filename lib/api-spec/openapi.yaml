@@ -1,22 +1,27 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Cheque Entry Manager API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: cheques
+    description: Cheque entry operations
+  - name: banks
+    description: Bank master operations
+  - name: parties
+    description: Party lookup operations
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +29,272 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /cheque-entries:
+    get:
+      operationId: listChequeEntries
+      tags: [cheques]
+      summary: List cheque entries with optional filters
+      parameters:
+        - name: entryDateFrom
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: entryDateTo
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: chequeDateFrom
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: chequeDateTo
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: billNo
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: chequeNo
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: partyName
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: bankName
+          in: query
+          schema:
+            type: ["string", "null"]
+      responses:
+        "200":
+          description: List of cheque entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ChequeEntry"
+
+    post:
+      operationId: createChequeEntry
+      tags: [cheques]
+      summary: Create a new cheque entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChequeEntryInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChequeEntry"
+        "409":
+          description: Duplicate cheque detected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DuplicateWarning"
+
+  /cheque-entries/stats:
+    get:
+      operationId: getChequeStats
+      tags: [cheques]
+      summary: Get summary stats for cheque entries
+      parameters:
+        - name: entryDateFrom
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: entryDateTo
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: chequeDateFrom
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: chequeDateTo
+          in: query
+          schema:
+            type: ["string", "null"]
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChequeStats"
+
+  /cheque-entries/{id}:
+    get:
+      operationId: getChequeEntry
+      tags: [cheques]
+      summary: Get a single cheque entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Cheque entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChequeEntry"
+        "404":
+          description: Not found
+
+    put:
+      operationId: updateChequeEntry
+      tags: [cheques]
+      summary: Update a cheque entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChequeEntryUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChequeEntry"
+        "404":
+          description: Not found
+
+    delete:
+      operationId: deleteChequeEntry
+      tags: [cheques]
+      summary: Delete a cheque entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+
+  /banks:
+    get:
+      operationId: listBanks
+      tags: [banks]
+      summary: List all banks
+      responses:
+        "200":
+          description: List of banks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Bank"
+
+    post:
+      operationId: createBank
+      tags: [banks]
+      summary: Add a custom bank
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BankInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bank"
+
+  /banks/{id}:
+    delete:
+      operationId: deleteBank
+      tags: [banks]
+      summary: Delete a bank
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /parties/lookup:
+    get:
+      operationId: lookupParty
+      tags: [parties]
+      summary: Lookup party name by bill number
+      parameters:
+        - name: billNo
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Party info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PartyLookup"
+        "404":
+          description: Not found
+
+  /settings:
+    get:
+      operationId: getSettings
+      tags: [parties]
+      summary: Get user settings (bank name, account no, mobile no)
+      responses:
+        "200":
+          description: Settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Settings"
+
+    put:
+      operationId: updateSettings
+      tags: [parties]
+      summary: Update user settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingsInput"
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Settings"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +305,179 @@ components:
       required:
         - status
 
+    ChequeEntry:
+      type: object
+      required:
+        - id
+        - entryDate
+        - chequeDate
+        - billNos
+        - partyName
+        - chequeAmount
+        - chequeNo
+        - bankName
+        - createdAt
+      properties:
+        id:
+          type: integer
+        entryDate:
+          type: string
+          format: date
+        chequeDate:
+          type: string
+          format: date
+        billNos:
+          type: array
+          items:
+            type: string
+          description: List of bill numbers for this cheque
+        partyName:
+          type: string
+        chequeAmount:
+          type: number
+        chequeNo:
+          type: string
+        bankName:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: ["string", "null"]
+          format: date-time
+
+    ChequeEntryInput:
+      type: object
+      required:
+        - entryDate
+        - chequeDate
+        - billNos
+        - partyName
+        - chequeAmount
+        - chequeNo
+        - bankName
+      properties:
+        entryDate:
+          type: string
+          format: date
+        chequeDate:
+          type: string
+          format: date
+        billNos:
+          type: array
+          items:
+            type: string
+        partyName:
+          type: string
+        chequeAmount:
+          type: number
+        chequeNo:
+          type: string
+        bankName:
+          type: string
+
+    ChequeEntryUpdate:
+      type: object
+      properties:
+        entryDate:
+          type: string
+          format: date
+        chequeDate:
+          type: string
+          format: date
+        billNos:
+          type: array
+          items:
+            type: string
+        partyName:
+          type: string
+        chequeAmount:
+          type: number
+        chequeNo:
+          type: string
+        bankName:
+          type: string
+
+    ChequeStats:
+      type: object
+      required:
+        - totalCheques
+        - totalAmount
+      properties:
+        totalCheques:
+          type: integer
+        totalAmount:
+          type: number
+
+    DuplicateWarning:
+      type: object
+      required:
+        - warning
+        - duplicate
+      properties:
+        warning:
+          type: string
+        duplicate:
+          $ref: "#/components/schemas/ChequeEntry"
+
+    Bank:
+      type: object
+      required:
+        - id
+        - name
+        - isDefault
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        isDefault:
+          type: boolean
+
+    BankInput:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+
+    PartyLookup:
+      type: object
+      required:
+        - billNo
+        - partyName
+      properties:
+        billNo:
+          type: string
+        partyName:
+          type: string
+        chequeNo:
+          type: ["string", "null"]
+
+    Settings:
+      type: object
+      required:
+        - id
+        - bankName
+        - accountNo
+        - mobileNo
+      properties:
+        id:
+          type: integer
+        bankName:
+          type: string
+        accountNo:
+          type: string
+        mobileNo:
+          type: string
+
+    SettingsInput:
+      type: object
+      properties:
+        bankName:
+          type: string
+        accountNo:
+          type: string
+        mobileNo:
+          type: string
