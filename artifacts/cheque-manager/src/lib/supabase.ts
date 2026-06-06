@@ -47,12 +47,21 @@ export interface SupaBill {
   payment_method: string | null;
 }
 
-export async function lookupBillFromSupabase(billNo: string): Promise<SupaBill | null> {
-  const { data, error } = await supabase
+export async function lookupBillFromSupabase(input: string): Promise<SupaBill | null> {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  const { data: exact } = await supabase
     .from('bills')
     .select('*')
-    .eq('bill_no', billNo)
+    .eq('bill_no', trimmed)
     .maybeSingle();
-  if (error) throw error;
-  return data;
+  if (exact) return exact;
+
+  const { data: rows } = await supabase
+    .from('bills')
+    .select('*')
+    .ilike('bill_no', `%${trimmed}`)
+    .limit(1);
+  return rows?.[0] ?? null;
 }
