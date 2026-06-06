@@ -73,6 +73,7 @@ export async function updateBillInSupabase(
     bank_name?: string;
     cheque_no?: string;
     next_bill_no?: string | null;
+    payment_date?: string | null;
   }
 ): Promise<void> {
   const { error } = await supabase

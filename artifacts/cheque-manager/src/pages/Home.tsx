@@ -279,6 +279,7 @@ export default function Home() {
               bank_name: bankName,
               cheque_no: chequeNo,
               next_bill_no: nextBillNo,
+              payment_date: entryDate,
             });
           }
         } else if (supaBillNo) {
@@ -287,6 +288,7 @@ export default function Home() {
             bank_name: bankName,
             cheque_no: chequeNo,
             next_bill_no: null,
+            payment_date: entryDate,
           });
         }
       } catch (supaErr) {

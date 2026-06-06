@@ -78,6 +78,8 @@ export default function Reports() {
     bankName: "",
     chequeDateFrom: today,
     chequeDateTo: today,
+    paymentDateFrom: "",
+    paymentDateTo: "",
   });
   const [appliedFilters, setAppliedFilters] = useState(filters);
 
@@ -105,6 +107,8 @@ export default function Reports() {
         if (f.bankName) q = q.ilike("bank_name", `%${f.bankName}%`);
         if (f.chequeDateFrom) q = q.gte("cheque_date", f.chequeDateFrom);
         if (f.chequeDateTo) q = q.lte("cheque_date", f.chequeDateTo);
+        if (f.paymentDateFrom) q = q.gte("payment_date", f.paymentDateFrom);
+        if (f.paymentDateTo) q = q.lte("payment_date", f.paymentDateTo);
 
         const { data, error } = await q;
         if (error) throw error;
@@ -127,7 +131,7 @@ export default function Reports() {
   };
 
   const handleReset = () => {
-    const reset = { partyName: "", chequeNo: "", bankName: "", chequeDateFrom: "", chequeDateTo: "" };
+    const reset = { partyName: "", chequeNo: "", bankName: "", chequeDateFrom: "", chequeDateTo: "", paymentDateFrom: "", paymentDateTo: "" };
     setFilters(reset);
     setAppliedFilters(reset);
     fetchAll(reset);
@@ -156,7 +160,7 @@ export default function Reports() {
             <CardTitle className="text-base">Filters — Supabase Data</CardTitle>
           </CardHeader>
           <CardContent className="pt-3 px-4 pb-4">
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div>
                 <label className="text-xs font-semibold mb-1 block">Cheque Date From</label>
                 <Input type="date" value={filters.chequeDateFrom} onChange={e => setFilters({ ...filters, chequeDateFrom: e.target.value })} className="h-9" />
@@ -164,6 +168,14 @@ export default function Reports() {
               <div>
                 <label className="text-xs font-semibold mb-1 block">Cheque Date To</label>
                 <Input type="date" value={filters.chequeDateTo} onChange={e => setFilters({ ...filters, chequeDateTo: e.target.value })} className="h-9" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold mb-1 block">Entry Date From</label>
+                <Input type="date" value={filters.paymentDateFrom} onChange={e => setFilters({ ...filters, paymentDateFrom: e.target.value })} className="h-9" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold mb-1 block">Entry Date To</label>
+                <Input type="date" value={filters.paymentDateTo} onChange={e => setFilters({ ...filters, paymentDateTo: e.target.value })} className="h-9" />
               </div>
               <div>
                 <label className="text-xs font-semibold mb-1 block">Party Name</label>
