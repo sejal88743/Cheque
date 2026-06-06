@@ -1,0 +1,268 @@
+Aap Replit ya Lovable AI me niche wala **full project prompt** use kar sakte ho:
+
+Create a mobile-first Progressive Web App (PWA) called "Cheque Entry Manager".
+
+TECH STACK:
+
+* React + TypeScript
+* Vite
+* Tailwind CSS
+* Supabase (existing project connection)
+* PWA enabled with offline support, installable on Android
+* Responsive mobile UI
+* Print-ready A4 reports
+
+SUPABASE INTEGRATION:
+
+* Connect with existing Supabase project.
+* Read Bills data from existing tables.
+* Do not create duplicate customer master data.
+* Party Name, Cheque No and Bill information must automatically fetch from existing Supabase records using Bill No.
+
+====================================
+PAGE 1 : CHEQUE ENTRY
+=====================
+
+Fields:
+
+1. Entry Date
+
+   * Default current date.
+   * Auto filled.
+   * Editable.
+
+2. Cheque Date
+
+   * User enters only DD.
+   * Month and Year auto use current month and year.
+   * Example:
+     User enters 15
+     Auto convert to 15/06/2026.
+
+3. Bill No
+
+   * Searchable.
+   * Multiple bill numbers allowed.
+   * Example:
+     7909+7908+7910
+
+4. Party Name
+
+   * Auto fetch from Supabase using Bill No.
+
+5. Cheque Amount
+
+6. Cheque No
+
+   * Auto fetch and save against Bill No.
+   * Editable if required.
+
+7. Bank Name
+
+   * Searchable dropdown.
+   * Type 2-3 letters and suggestions appear.
+   * Example:
+     HDF -> HDFC BANK
+     SBI -> STATE BANK OF INDIA
+
+Bank Master table:
+
+* HDFC BANK
+* STATE BANK OF INDIA
+* ICICI BANK
+* AXIS BANK
+* BANK OF BARODA
+* UNION BANK
+* CANARA BANK
+* PUNJAB NATIONAL BANK
+* IDBI BANK
+* KOTAK MAHINDRA BANK
+
+Features:
+
+* Save
+* Edit
+* Delete
+* Duplicate cheque detection
+* Validation
+
+Duplicate Rules:
+Same:
+
+* Cheque Date
+* Cheque Amount
+* Party Name
+* Cheque No
+
+Then show warning:
+"Possible Duplicate Cheque Entry"
+
+====================================
+PAGE 2 : REPORTS
+================
+
+Filters:
+
+* Entry Date From / To
+* Cheque Date From / To
+* Bill No Search
+* Cheque No Search
+* Party Name Search
+* Bank Name Search
+
+Report must show:
+
+* Entry Date
+* Cheque Date
+* Bill No
+* Party Name
+* Cheque Amount
+* Cheque No
+* Bank Name
+
+Search should be instant.
+
+====================================
+ADD ENTRY FROM REPORT
+=====================
+
+Reports page should have:
+
+* New Entry Button
+
+User can create cheque entry directly from report page.
+
+====================================
+PRINT DEPOSIT SLIP REPORT
+=========================
+
+Print Layout:
+
+A4 Portrait Only
+
+Never Landscape.
+
+Header:
+
+BANK DEPOSIT REPORT
+
+Below Header Show:
+
+Bank Name : __________
+Account No : __________
+Mobile No : __________
+Deposit Date : __________
+
+Header Font:
+
+* 16px
+* Bold
+
+Table Columns:
+
+| Amount | Cheque Date | Cheque No | Bank Name | Bill No |
+
+Rules:
+
+If multiple bills in one cheque:
+
+7909+7908+7910
+
+Display exactly in same format.
+
+All table text:
+
+* Bold
+* Center aligned
+
+Footer Total Row:
+
+Total Cheques : XX
+Total Amount : ₹ XXXXX
+
+Footer should automatically calculate.
+
+====================================
+EXPORT FEATURES
+===============
+
+* Export PDF
+* Export Excel
+* Print Preview
+
+PDF Requirements:
+
+* A4 Portrait
+* Proper margins
+* No content cut
+* Bold fonts
+* Bank deposit format
+
+====================================
+PWA REQUIREMENTS
+================
+
+* Installable Android PWA
+* Mobile app experience
+* Offline cache
+* Fast loading
+* App icon
+* Splash screen
+* Home screen install
+
+====================================
+SECURITY
+========
+
+* Supabase RLS compatible
+* Authenticated users only
+* Proper error handling
+* Loading indicators
+* Toast notifications
+
+====================================
+UI DESIGN
+=========
+
+* Clean accounting style
+* Large mobile inputs
+* Sticky Save button
+* Sticky filters
+* Dark mode support
+* Professional banking theme
+
+====================================
+DATABASE TABLE
+==============
+
+cheque_entries
+
+Columns:
+
+id
+entry_date
+cheque_date
+bill_no
+party_name
+cheque_amount
+cheque_no
+bank_name
+created_at
+updated_at
+
+Indexes:
+
+bill_no
+cheque_no
+cheque_date
+entry_date
+
+====================================
+FINAL REQUIREMENT
+=================
+
+Application must be production-ready, mobile-first, optimized for 10,000+ cheque entries, fast search, fast reports, print-ready A4 deposit slips, and seamlessly connected to existing Supabase data.
+
+PWA ko installable banane ke liye HTTPS, Web Manifest aur Service Worker required hote hain. Ye install hone par Android me app ki tarah chalega. ([app-masters.github.io][1])
+
+[1]: https://app-masters.github.io/core/docs/knowledge/frontend/pwa-en?utm_source=chatgpt.com "PWA · App Masters"
