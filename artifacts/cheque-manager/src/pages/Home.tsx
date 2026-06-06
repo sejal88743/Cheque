@@ -51,6 +51,7 @@ export default function Home() {
 
   const [lookupLoading, setLookupLoading] = useState(false);
   const [billSource, setBillSource] = useState<"supabase" | "localdb" | null>(null);
+  const [billNetAmt, setBillNetAmt] = useState<number | null>(null);
 
   const [duplicateWarning, setDuplicateWarning] = useState<{ open: boolean; saveData: any }>({ open: false, saveData: null });
 
@@ -91,6 +92,7 @@ export default function Home() {
     setChequeNo("");
     setBankName("");
     setBillSource(null);
+    setBillNetAmt(null);
     setMultiBills([]);
     setChequeTotal(0);
     setNextBillInput("");
@@ -102,6 +104,7 @@ export default function Home() {
     if (data.cheque_no) setChequeNo(data.cheque_no);
     if (data.bank_name) setBankName(data.bank_name);
     if (data.cheque_amount) setChequeAmount(String(data.cheque_amount));
+    if (data.bill_net_amt != null) setBillNetAmt(Number(data.bill_net_amt));
     if (data.cheque_date) {
       try { setChequeDay(format(new Date(data.cheque_date), "dd")); } catch {}
     }
@@ -363,7 +366,14 @@ export default function Home() {
           )}
 
           <div>
-            <Label className="font-semibold text-xs mb-1 block">Party Name</Label>
+            <Label className="font-semibold text-xs mb-1 flex justify-between">
+              <span>Party Name</span>
+              {billNetAmt != null && (
+                <span className="font-normal text-green-700">
+                  Bill Amt: <strong>{new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(billNetAmt)}</strong>
+                </span>
+              )}
+            </Label>
             <Input
               ref={partyRef}
               type="text"

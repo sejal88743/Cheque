@@ -1,290 +1,293 @@
-import { useState, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { format } from "date-fns";
 import { Link } from "wouter";
-import { 
-  useListChequeEntries, 
-  useGetChequeStats, 
-  useGetSettings, 
-  getListChequeEntriesQueryKey, 
-  getGetChequeStatsQueryKey, 
-  useDeleteChequeEntry,
-  useUpdateChequeEntry
-} from "@workspace/api-client-react";
+import { supabase, SupaBill } from "@/lib/supabase";
+import { useGetSettings } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Printer, Search, Trash2, Edit, Plus } from "lucide-react";
+import { Printer, Search, Plus, Loader2, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
+
+interface GroupedRow {
+  chequeDate: string | null;
+  chequeNo: string;
+  bankName: string;
+  chequeAmt: number;
+  billNos: string;
+  partyNames: string;
+  rowCount: number;
+}
+
+const fmtDate = (d: string | null) => {
+  if (!d) return "—";
+  try { return format(new Date(d), "dd/MM/yyyy"); } catch { return d; }
+};
+
+const fmtINR = (n: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
+
+const extractBillNum = (billNo: string | null): string => {
+  if (!billNo) return "";
+  const match = billNo.match(/(\d+)$/);
+  if (!match) return billNo;
+  return String(parseInt(match[1], 10));
+};
+
+const groupRows = (rows: SupaBill[]): GroupedRow[] => {
+  const map = new Map<string, SupaBill[]>();
+  for (const row of rows) {
+    const key = `${row.cheque_no ?? ""}|||${row.cheque_date ?? ""}|||${row.bank_name ?? ""}`;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(row);
+  }
+  return Array.from(map.values())
+    .map(grp => {
+      const first = grp[0];
+      const totalAmt = grp.reduce((s, r) => s + Number(r.cheque_amount ?? 0), 0);
+      const billNos = grp.map(r => extractBillNum(r.bill_no)).filter(Boolean).join("+");
+      const parties = [...new Set(grp.map(r => r.party_name).filter(Boolean))].join(", ");
+      return {
+        chequeDate: first.cheque_date,
+        chequeNo: first.cheque_no ?? "—",
+        bankName: first.bank_name ?? "—",
+        chequeAmt: totalAmt,
+        billNos,
+        partyNames: parties,
+        rowCount: grp.length,
+      };
+    })
+    .sort((a, b) => {
+      if (!a.chequeDate) return 1;
+      if (!b.chequeDate) return -1;
+      return b.chequeDate.localeCompare(a.chequeDate);
+    });
+};
+
+const PAGE_SIZE = 1000;
 
 export default function Reports() {
+  const { toast } = useToast();
+  const { data: settings } = useGetSettings();
+
+  const today = format(new Date(), "yyyy-MM-dd");
   const [filters, setFilters] = useState({
     partyName: "",
     chequeNo: "",
     bankName: "",
-    entryDateFrom: format(new Date(), "yyyy-MM-dd"),
-    entryDateTo: format(new Date(), "yyyy-MM-dd"),
+    chequeDateFrom: today,
+    chequeDateTo: today,
   });
   const [appliedFilters, setAppliedFilters] = useState(filters);
-  const { toast } = useToast();
 
-  const { data: entries, refetch } = useListChequeEntries(appliedFilters, { 
-    query: { queryKey: getListChequeEntriesQueryKey(appliedFilters) } 
-  });
-  const { data: stats, refetch: refetchStats } = useGetChequeStats(appliedFilters, {
-    query: { queryKey: getGetChequeStatsQueryKey(appliedFilters) }
-  });
-  const { data: settings } = useGetSettings();
-  const deleteEntry = useDeleteChequeEntry();
-  const updateEntry = useUpdateChequeEntry();
+  const [loading, setLoading] = useState(false);
+  const [grouped, setGrouped] = useState<GroupedRow[]>([]);
+  const [fetched, setFetched] = useState(false);
 
-  const [editingEntry, setEditingEntry] = useState<any>(null);
-  const [editForm, setEditForm] = useState<any>({});
+  const fetchAll = useCallback(async (f: typeof filters) => {
+    setLoading(true);
+    setFetched(false);
+    try {
+      let allRows: SupaBill[] = [];
+      let from = 0;
+      while (true) {
+        let q = supabase
+          .from("bills")
+          .select("cheque_no,cheque_date,bank_name,cheque_amount,bill_no,party_name,bill_net_amt,payment_mode")
+          .not("cheque_no", "is", null)
+          .ilike("payment_mode", "%cheque%")
+          .order("cheque_date", { ascending: false })
+          .range(from, from + PAGE_SIZE - 1);
 
-  const handleApply = () => setAppliedFilters(filters);
+        if (f.partyName) q = q.ilike("party_name", `%${f.partyName}%`);
+        if (f.chequeNo) q = q.ilike("cheque_no", `%${f.chequeNo}%`);
+        if (f.bankName) q = q.ilike("bank_name", `%${f.bankName}%`);
+        if (f.chequeDateFrom) q = q.gte("cheque_date", f.chequeDateFrom);
+        if (f.chequeDateTo) q = q.lte("cheque_date", f.chequeDateTo);
+
+        const { data, error } = await q;
+        if (error) throw error;
+        allRows = allRows.concat(data ?? []);
+        if (!data || data.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+      }
+      setGrouped(groupRows(allRows));
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Error", description: e.message });
+    } finally {
+      setLoading(false);
+      setFetched(true);
+    }
+  }, []);
+
+  const handleApply = () => {
+    setAppliedFilters(filters);
+    fetchAll(filters);
+  };
+
   const handleReset = () => {
-    const reset = {
-      partyName: "",
-      chequeNo: "",
-      bankName: "",
-      entryDateFrom: "",
-      entryDateTo: "",
-    };
+    const reset = { partyName: "", chequeNo: "", bankName: "", chequeDateFrom: "", chequeDateTo: "" };
     setFilters(reset);
     setAppliedFilters(reset);
+    fetchAll(reset);
   };
 
-  const handlePrint = () => {
-    window.print();
-  };
-
-  const handleDelete = (id: number) => {
-    if (confirm("Are you sure you want to delete this entry?")) {
-      deleteEntry.mutate({ id }, {
-        onSuccess: () => {
-          toast({ title: "Deleted", description: "Entry deleted successfully" });
-          refetch();
-          refetchStats();
-        }
-      });
-    }
-  };
-
-  const openEdit = (entry: any) => {
-    setEditingEntry(entry);
-    setEditForm({
-      entryDate: entry.entryDate,
-      chequeDate: entry.chequeDate,
-      partyName: entry.partyName,
-      chequeAmount: entry.chequeAmount,
-      chequeNo: entry.chequeNo,
-      bankName: entry.bankName,
-      billNos: entry.billNos.join(", ")
-    });
-  };
-
-  const handleSaveEdit = () => {
-    updateEntry.mutate({
-      id: editingEntry.id,
-      data: {
-        ...editForm,
-        chequeAmount: Number(editForm.chequeAmount),
-        billNos: editForm.billNos.split(",").map((s: string) => s.trim()).filter(Boolean)
-      }
-    }, {
-      onSuccess: () => {
-        toast({ title: "Updated", description: "Entry updated successfully" });
-        setEditingEntry(null);
-        refetch();
-        refetchStats();
-      }
-    });
-  };
+  const totalAmt = grouped.reduce((s, r) => s + r.chequeAmt, 0);
+  const totalBills = grouped.reduce((s, r) => s + r.rowCount, 0);
 
   return (
-    <div className="space-y-6">
-      <div className="no-print flex justify-between items-center mb-4">
-        <h2 className="text-2xl font-bold tracking-tight text-primary">Reports & Search</h2>
-        <Link href="/" className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2">
-          <Plus className="h-4 w-4 mr-2" /> New Entry
-        </Link>
+    <div className="space-y-4">
+      <div className="no-print flex justify-between items-center">
+        <h2 className="text-2xl font-bold tracking-tight text-primary">Reports</h2>
+        <div className="flex gap-2">
+          <Link href="/" className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-3">
+            <Plus className="h-4 w-4 mr-1" /> New Entry
+          </Link>
+          <Button onClick={() => window.print()} variant="secondary" className="h-9 px-3 bg-accent text-accent-foreground hover:bg-accent/90">
+            <Printer className="h-4 w-4 mr-1" /> Print
+          </Button>
+        </div>
       </div>
 
       <div className="no-print">
         <Card className="shadow-sm">
-          <CardHeader className="pb-3 border-b bg-slate-50/50">
-            <CardTitle className="text-lg">Filters</CardTitle>
+          <CardHeader className="py-3 px-4 border-b bg-slate-50/50">
+            <CardTitle className="text-base">Filters — Supabase Data</CardTitle>
           </CardHeader>
-          <CardContent className="pt-4">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <CardContent className="pt-3 px-4 pb-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
               <div>
-                <label className="text-xs font-semibold mb-1 block">From Date</label>
-                <Input type="date" value={filters.entryDateFrom} onChange={e => setFilters({...filters, entryDateFrom: e.target.value})} />
+                <label className="text-xs font-semibold mb-1 block">Cheque Date From</label>
+                <Input type="date" value={filters.chequeDateFrom} onChange={e => setFilters({ ...filters, chequeDateFrom: e.target.value })} className="h-9" />
               </div>
               <div>
-                <label className="text-xs font-semibold mb-1 block">To Date</label>
-                <Input type="date" value={filters.entryDateTo} onChange={e => setFilters({...filters, entryDateTo: e.target.value})} />
+                <label className="text-xs font-semibold mb-1 block">Cheque Date To</label>
+                <Input type="date" value={filters.chequeDateTo} onChange={e => setFilters({ ...filters, chequeDateTo: e.target.value })} className="h-9" />
               </div>
               <div>
                 <label className="text-xs font-semibold mb-1 block">Party Name</label>
-                <Input placeholder="Search party..." value={filters.partyName} onChange={e => setFilters({...filters, partyName: e.target.value})} />
+                <Input placeholder="Search party..." value={filters.partyName} onChange={e => setFilters({ ...filters, partyName: e.target.value })} className="h-9" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold mb-1 block">Cheque No</label>
+                <Input placeholder="Search cheque no..." value={filters.chequeNo} onChange={e => setFilters({ ...filters, chequeNo: e.target.value })} className="h-9" />
               </div>
               <div>
                 <label className="text-xs font-semibold mb-1 block">Bank Name</label>
-                <Input placeholder="Search bank..." value={filters.bankName} onChange={e => setFilters({...filters, bankName: e.target.value})} />
+                <Input placeholder="Search bank..." value={filters.bankName} onChange={e => setFilters({ ...filters, bankName: e.target.value })} className="h-9" />
               </div>
             </div>
-            <div className="flex gap-2 mt-4 justify-end">
-              <Button variant="outline" onClick={handleReset}>Reset</Button>
-              <Button onClick={handleApply} className="bg-primary text-primary-foreground"><Search className="h-4 w-4 mr-2" /> Apply</Button>
-              <Button onClick={handlePrint} variant="secondary" className="bg-accent text-accent-foreground hover:bg-accent/90"><Printer className="h-4 w-4 mr-2" /> Print Deposit Slip</Button>
+            <div className="flex gap-2 mt-3 justify-end">
+              <Button variant="outline" onClick={handleReset} className="h-9" disabled={loading}>Reset</Button>
+              <Button onClick={handleApply} className="bg-primary text-primary-foreground h-9" disabled={loading}>
+                {loading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Search className="h-4 w-4 mr-1" />}
+                Apply
+              </Button>
             </div>
           </CardContent>
         </Card>
       </div>
 
       <Card className="shadow-md">
-        <CardHeader className="py-4 border-b bg-white print:hidden">
-          <CardTitle className="text-lg flex justify-between items-center">
-            Results
+        <CardHeader className="py-3 px-4 border-b bg-white print:hidden">
+          <CardTitle className="text-base flex justify-between items-center">
+            <span className="flex items-center gap-2">
+              Results
+              {fetched && (
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => fetchAll(appliedFilters)} disabled={loading}>
+                  <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+                </Button>
+              )}
+            </span>
             <div className="text-sm font-normal text-muted-foreground flex gap-4">
-              <span>Total Cheques: <strong className="text-foreground">{stats?.totalCheques || 0}</strong></span>
-              <span>Total Amount: <strong className="text-foreground text-primary">₹{(stats?.totalAmount || 0).toLocaleString('en-IN')}</strong></span>
+              <span>Cheques: <strong className="text-foreground">{grouped.length}</strong></span>
+              <span>Bills: <strong className="text-foreground">{totalBills}</strong></span>
+              <span>Total: <strong className="text-primary">{fmtINR(totalAmt)}</strong></span>
             </div>
           </CardTitle>
         </CardHeader>
+
         <CardContent className="p-0">
-          
-          {/* PRINT HEADER - ONLY VISIBLE ON PRINT */}
-          <div className="hidden print:block mb-8 text-center border-b-2 border-black pb-4">
-            <h1 className="text-2xl font-bold uppercase mb-2">Bank Deposit Report</h1>
-            <div className="flex justify-between text-left text-sm font-bold mt-4">
+          {/* PRINT HEADER */}
+          <div className="hidden print:block mb-4 text-center border-b-2 border-black pb-2">
+            <h1 className="text-xl font-bold uppercase">Bank Deposit Report</h1>
+            <div className="flex justify-between text-xs font-bold mt-2">
               <div>
-                <p>Bank Name: {settings?.bankName || '________________'}</p>
-                <p>Account No: {settings?.accountNo || '________________'}</p>
+                <p>Bank: {settings?.bankName || "________________"}</p>
+                <p>A/c: {settings?.accountNo || "________________"}</p>
               </div>
               <div className="text-right">
-                <p>Mobile: {settings?.mobileNo || '________________'}</p>
+                <p>Mobile: {settings?.mobileNo || "________________"}</p>
                 <p>Date: {format(new Date(), "dd/MM/yyyy")}</p>
               </div>
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <Table className="w-full text-sm print:text-xs">
-              <TableHeader className="bg-slate-50 print:bg-transparent">
-                <TableRow className="print:border-black print:border-y-2">
-                  <TableHead className="font-semibold print:text-black print:font-bold">Entry Date</TableHead>
-                  <TableHead className="font-semibold print:text-black print:font-bold">Cheque Date</TableHead>
-                  <TableHead className="font-semibold print:text-black print:font-bold">Bill Nos</TableHead>
-                  <TableHead className="font-semibold print:text-black print:font-bold">Party Name</TableHead>
-                  <TableHead className="font-semibold print:text-black print:font-bold text-right">Amount</TableHead>
-                  <TableHead className="font-semibold print:text-black print:font-bold">Cheque No</TableHead>
-                  <TableHead className="font-semibold print:text-black print:font-bold">Bank Name</TableHead>
-                  <TableHead className="text-right no-print">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {entries?.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">No entries found.</TableCell>
+          {loading ? (
+            <div className="flex items-center justify-center py-16 text-muted-foreground">
+              <Loader2 className="h-6 w-6 animate-spin mr-2" /> Loading from Supabase...
+            </div>
+          ) : !fetched ? (
+            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3">
+              <p>Filters set karke Apply karo</p>
+              <Button onClick={handleApply} className="bg-primary text-primary-foreground">
+                <Search className="h-4 w-4 mr-2" /> Load Data
+              </Button>
+            </div>
+          ) : grouped.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">Koi cheque entry nahi mili.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table className="w-full text-sm print:text-[10px]">
+                <TableHeader className="bg-slate-50 print:bg-transparent">
+                  <TableRow className="print:border-y-2 print:border-black">
+                    <TableHead className="font-bold print:text-black w-24">Chq Date</TableHead>
+                    <TableHead className="font-bold print:text-black text-right w-28">Chq Amt</TableHead>
+                    <TableHead className="font-bold print:text-black w-28">Chq No</TableHead>
+                    <TableHead className="font-bold print:text-black">Bank</TableHead>
+                    <TableHead className="font-bold print:text-black">Bill No(s)</TableHead>
                   </TableRow>
-                ) : (
-                  entries?.map((entry) => (
-                    <TableRow key={entry.id} className="print:border-b print:border-gray-400">
-                      <TableCell>{format(new Date(entry.entryDate), "dd/MM/yyyy")}</TableCell>
-                      <TableCell>{format(new Date(entry.chequeDate), "dd/MM/yyyy")}</TableCell>
-                      <TableCell className="font-mono text-xs print:font-bold">{entry.billNos.join(" + ")}</TableCell>
-                      <TableCell className="font-medium print:font-bold">{entry.partyName}</TableCell>
-                      <TableCell className="text-right font-bold">₹{entry.chequeAmount.toLocaleString('en-IN')}</TableCell>
-                      <TableCell className="font-mono text-xs tracking-wider print:font-bold">{entry.chequeNo}</TableCell>
-                      <TableCell className="print:font-bold">{entry.bankName}</TableCell>
-                      <TableCell className="text-right no-print">
-                        <div className="flex justify-end gap-2">
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => openEdit(entry)}>
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:bg-destructive/10" onClick={() => handleDelete(entry.id)}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
+                </TableHeader>
+                <TableBody>
+                  {grouped.map((row, i) => (
+                    <TableRow key={i} className="print:border-b print:border-gray-400">
+                      <TableCell className="py-2 print:py-1">{fmtDate(row.chequeDate)}</TableCell>
+                      <TableCell className="py-2 print:py-1 text-right font-bold text-primary print:text-black">
+                        {fmtINR(row.chequeAmt)}
+                      </TableCell>
+                      <TableCell className="py-2 print:py-1 font-mono text-xs tracking-wider">{row.chequeNo}</TableCell>
+                      <TableCell className="py-2 print:py-1 text-xs">{row.bankName}</TableCell>
+                      <TableCell className="py-2 print:py-1 font-mono text-xs font-semibold">
+                        {row.billNos}
+                        {row.rowCount > 1 && (
+                          <span className="ml-1 text-[10px] text-muted-foreground print:hidden">
+                            ({row.rowCount} bills)
+                          </span>
+                        )}
                       </TableCell>
                     </TableRow>
-                  ))
-                )}
-                {/* PRINT FOOTER ROW */}
-                <TableRow className="hidden print:table-row font-bold border-t-2 border-black bg-gray-100">
-                  <TableCell colSpan={4} className="text-right uppercase">Totals:</TableCell>
-                  <TableCell className="text-right">₹{(stats?.totalAmount || 0).toLocaleString('en-IN')}</TableCell>
-                  <TableCell colSpan={3}>Cheques: {stats?.totalCheques || 0}</TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </div>
+                  ))}
+                  {/* PRINT TOTAL ROW */}
+                  <TableRow className="hidden print:table-row font-bold border-t-2 border-black">
+                    <TableCell className="text-right font-bold" colSpan={1}>Total:</TableCell>
+                    <TableCell className="text-right font-bold">{fmtINR(totalAmt)}</TableCell>
+                    <TableCell colSpan={3} className="font-bold">Cheques: {grouped.length} | Bills: {totalBills}</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </CardContent>
       </Card>
-      
-      <Dialog open={!!editingEntry} onOpenChange={(open) => !open && setEditingEntry(null)}>
-        <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader>
-            <DialogTitle>Edit Cheque Entry</DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Entry Date</Label>
-                <Input type="date" value={editForm.entryDate || ""} onChange={e => setEditForm({...editForm, entryDate: e.target.value})} />
-              </div>
-              <div className="space-y-2">
-                <Label>Cheque Date</Label>
-                <Input type="date" value={editForm.chequeDate || ""} onChange={e => setEditForm({...editForm, chequeDate: e.target.value})} />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Party Name</Label>
-              <Input value={editForm.partyName || ""} onChange={e => setEditForm({...editForm, partyName: e.target.value})} />
-            </div>
-            <div className="space-y-2">
-              <Label>Bill Nos (comma separated)</Label>
-              <Input value={editForm.billNos || ""} onChange={e => setEditForm({...editForm, billNos: e.target.value})} />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Amount</Label>
-                <Input type="number" value={editForm.chequeAmount || ""} onChange={e => setEditForm({...editForm, chequeAmount: e.target.value})} />
-              </div>
-              <div className="space-y-2">
-                <Label>Cheque No</Label>
-                <Input value={editForm.chequeNo || ""} onChange={e => setEditForm({...editForm, chequeNo: e.target.value})} />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Bank Name</Label>
-              <Input value={editForm.bankName || ""} onChange={e => setEditForm({...editForm, bankName: e.target.value})} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditingEntry(null)}>Cancel</Button>
-            <Button onClick={handleSaveEdit}>Save changes</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <style>{`
         @media print {
-          @page { size: A4 portrait; margin: 20mm; }
+          @page { size: A4 portrait; margin: 6mm 8mm; }
           body { background: white; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
           .no-print { display: none !important; }
-          table { width: 100%; border-collapse: collapse; text-align: center; }
-          th, td { border: 1px solid #000; padding: 6px; font-weight: bold; color: black; }
+          table { width: 100%; border-collapse: collapse; }
+          th, td { border: 1px solid #000; padding: 3px 5px; color: black; }
           .container { max-width: 100% !important; padding: 0 !important; margin: 0 !important; }
           header { display: none !important; }
         }
