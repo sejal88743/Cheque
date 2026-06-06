@@ -14,9 +14,9 @@ import {
   useCreateChequeEntry, 
   useListBanks, 
   getListBanksQueryKey,
-  getLookupPartyQueryOptions
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { lookupBillFromSupabase } from "@/lib/supabase";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -95,12 +95,25 @@ export default function Home() {
   const performLookup = async (billNo: string) => {
     if (!billNo) return;
     try {
-      const data = await queryClient.fetchQuery(getLookupPartyQueryOptions({ billNo }));
-      if (data?.partyName && !form.getValues().partyName) {
-        form.setValue("partyName", data.partyName);
+      const data = await lookupBillFromSupabase(billNo);
+      if (!data) return;
+      if (data.party_name && !form.getValues().partyName) {
+        form.setValue("partyName", data.party_name);
       }
-      if (data?.chequeNo && !form.getValues().chequeNo) {
-        form.setValue("chequeNo", data.chequeNo);
+      if (data.cheque_no && !form.getValues().chequeNo) {
+        form.setValue("chequeNo", data.cheque_no);
+      }
+      if (data.cheque_amount && !form.getValues().chequeAmount) {
+        form.setValue("chequeAmount", Number(data.cheque_amount));
+      }
+      if (data.bank_name && !form.getValues().bankName) {
+        form.setValue("bankName", data.bank_name);
+      }
+      if (data.cheque_date && form.getValues().chequeDay === format(new Date(), "dd")) {
+        try {
+          const day = format(new Date(data.cheque_date), "dd");
+          form.setValue("chequeDay", day);
+        } catch {}
       }
     } catch (err) {
       // silent fail for lookup

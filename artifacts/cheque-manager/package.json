@@ -75,5 +75,8 @@
     "workbox-window": "^7.4.1",
     "wouter": "^3.3.5",
     "zod": "catalog:"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.107.0"
   }
 }
