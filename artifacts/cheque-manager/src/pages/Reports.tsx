@@ -241,7 +241,7 @@ export default function Reports() {
           {/* PRINT HEADER */}
           <div className="hidden print:block mb-4 text-center border-b-2 border-black pb-2">
             <h1 className="text-xl font-bold uppercase">Bank Deposit Report</h1>
-            <div className="flex justify-between text-xs font-bold mt-2">
+            <div className="flex justify-between mt-2" style={{ fontSize: "20px", fontWeight: "bold" }}>
               <div>
                 <p>Bank: {settings?.bankName || "________________"}</p>
                 <p>A/c: {settings?.accountNo || "________________"}</p>
