@@ -35,6 +35,14 @@ const extractBillNum = (billNo: string | null): string => {
   return String(parseInt(match[1], 10));
 };
 
+const parsePayDate = (s: string | null | undefined): Date | null => {
+  if (!s || !s.trim()) return null;
+  const ddmm = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (ddmm) return new Date(`${ddmm[3]}-${ddmm[2].padStart(2,"0")}-${ddmm[1].padStart(2,"0")}`);
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return new Date(s.slice(0, 10));
+  return null;
+};
+
 const groupRows = (rows: SupaBill[]): GroupedRow[] => {
   const map = new Map<string, SupaBill[]>();
   for (const row of rows) {
@@ -71,13 +79,12 @@ export default function Reports() {
   const { toast } = useToast();
   const { data: settings } = useGetSettings();
 
-  const today = format(new Date(), "yyyy-MM-dd");
   const [filters, setFilters] = useState({
     partyName: "",
     chequeNo: "",
     bankName: "",
-    chequeDateFrom: today,
-    chequeDateTo: today,
+    chequeDateFrom: "",
+    chequeDateTo: "",
     paymentDateFrom: "",
     paymentDateTo: "",
   });
@@ -96,7 +103,7 @@ export default function Reports() {
       while (true) {
         let q = supabase
           .from("bills")
-          .select("cheque_no,cheque_date,bank_name,cheque_amount,bill_no,party_name,bill_net_amt,payment_mode")
+          .select("cheque_no,cheque_date,bank_name,cheque_amount,bill_no,party_name,bill_net_amt,payment_mode,payment_date")
           .not("cheque_no", "is", null)
           .ilike("payment_mode", "%cheque%")
           .order("cheque_date", { ascending: false })
@@ -107,8 +114,6 @@ export default function Reports() {
         if (f.bankName) q = q.ilike("bank_name", `%${f.bankName}%`);
         if (f.chequeDateFrom) q = q.gte("cheque_date", f.chequeDateFrom);
         if (f.chequeDateTo) q = q.lte("cheque_date", f.chequeDateTo);
-        if (f.paymentDateFrom) q = q.gte("payment_date", f.paymentDateFrom);
-        if (f.paymentDateTo) q = q.lte("payment_date", f.paymentDateTo);
 
         const { data, error } = await q;
         if (error) throw error;
@@ -116,7 +121,19 @@ export default function Reports() {
         if (!data || data.length < PAGE_SIZE) break;
         from += PAGE_SIZE;
       }
-      setGrouped(groupRows(allRows));
+      let filtered = allRows;
+      if (f.paymentDateFrom || f.paymentDateTo) {
+        const from = f.paymentDateFrom ? new Date(f.paymentDateFrom) : null;
+        const to = f.paymentDateTo ? new Date(f.paymentDateTo + "T23:59:59") : null;
+        filtered = allRows.filter(row => {
+          const pd = parsePayDate(row.payment_date);
+          if (!pd) return false;
+          if (from && pd < from) return false;
+          if (to && pd > to) return false;
+          return true;
+        });
+      }
+      setGrouped(groupRows(filtered));
     } catch (e: any) {
       toast({ variant: "destructive", title: "Error", description: e.message });
     } finally {
