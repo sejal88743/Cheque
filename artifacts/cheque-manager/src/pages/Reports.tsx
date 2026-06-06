@@ -294,6 +294,11 @@ export default function Reports() {
                             ({row.rowCount} bills)
                           </span>
                         )}
+                        {row.partyNames && (
+                          <span className="ml-2 font-sans font-normal not-italic text-[10px] print:text-[9px] text-muted-foreground print:text-black">
+                            {row.partyNames.slice(0, 12)}{row.partyNames.length > 12 ? "." : ""}
+                          </span>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
