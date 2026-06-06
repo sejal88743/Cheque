@@ -24,7 +24,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { lookupBillFromSupabase, SupaBill } from "@/lib/supabase";
+import { lookupBillFromSupabase, updateBillInSupabase, SupaBill } from "@/lib/supabase";
 import { Badge } from "@/components/ui/badge";
 
 interface BillItem {
@@ -52,6 +52,7 @@ export default function Home() {
   const [lookupLoading, setLookupLoading] = useState(false);
   const [billSource, setBillSource] = useState<"supabase" | "localdb" | null>(null);
   const [billNetAmt, setBillNetAmt] = useState<number | null>(null);
+  const [supaBillNo, setSupaBillNo] = useState<string | null>(null);
 
   const [duplicateWarning, setDuplicateWarning] = useState<{ open: boolean; saveData: any }>({ open: false, saveData: null });
 
@@ -93,6 +94,7 @@ export default function Home() {
     setBankName("");
     setBillSource(null);
     setBillNetAmt(null);
+    setSupaBillNo(null);
     setMultiBills([]);
     setChequeTotal(0);
     setNextBillInput("");
@@ -146,6 +148,7 @@ export default function Home() {
         return;
       }
       setBillSource("supabase");
+      setSupaBillNo(data.bill_no ?? input.trim());
       applySupabaseBill(data);
 
       const billNetAmt = Number(data.bill_net_amt ?? 0);
@@ -266,7 +269,30 @@ export default function Home() {
     }
 
     if (savedCount === billsToSave.length) {
-      toast({ title: "✓ Saved", description: `${savedCount} entr${savedCount > 1 ? "ies" : "y"} saved successfully.` });
+      try {
+        if (multiBills.length > 0) {
+          for (let i = 0; i < multiBills.length; i++) {
+            const bill = multiBills[i];
+            const nextBillNo = i < multiBills.length - 1 ? multiBills[i + 1].billNo : null;
+            await updateBillInSupabase(bill.billNo, {
+              cheque_date: chequeDate,
+              bank_name: bankName,
+              cheque_no: chequeNo,
+              next_bill_no: nextBillNo,
+            });
+          }
+        } else if (supaBillNo) {
+          await updateBillInSupabase(supaBillNo, {
+            cheque_date: chequeDate,
+            bank_name: bankName,
+            cheque_no: chequeNo,
+            next_bill_no: null,
+          });
+        }
+      } catch (supaErr) {
+        console.warn("Supabase update failed:", supaErr);
+      }
+      toast({ title: "✓ Saved", description: `${savedCount} entr${savedCount > 1 ? "ies" : "y"} saved — Supabase bhi update hua.` });
       resetForm();
     }
   };

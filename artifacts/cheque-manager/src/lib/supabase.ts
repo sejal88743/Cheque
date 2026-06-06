@@ -65,3 +65,19 @@ export async function lookupBillFromSupabase(input: string): Promise<SupaBill | 
     .limit(1);
   return rows?.[0] ?? null;
 }
+
+export async function updateBillInSupabase(
+  billNo: string,
+  updates: {
+    cheque_date?: string;
+    bank_name?: string;
+    cheque_no?: string;
+    next_bill_no?: string | null;
+  }
+): Promise<void> {
+  const { error } = await supabase
+    .from('bills')
+    .update(updates)
+    .eq('bill_no', billNo);
+  if (error) throw error;
+}
