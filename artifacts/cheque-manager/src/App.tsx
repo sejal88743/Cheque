@@ -49,14 +49,20 @@ function Layout({ children }: { children: React.ReactNode }) {
   );
 }
 
+function HomePage() { return <Layout><Home /></Layout>; }
+function ReportsPage() { return <Layout><Reports /></Layout>; }
+function BillsPage() { return <Layout><Bills /></Layout>; }
+function SettingsPage() { return <Layout><Settings /></Layout>; }
+function NotFoundPage() { return <Layout><NotFound /></Layout>; }
+
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={() => <Layout><Home /></Layout>} />
-      <Route path="/reports" component={() => <Layout><Reports /></Layout>} />
-      <Route path="/bills" component={() => <Layout><Bills /></Layout>} />
-      <Route path="/settings" component={() => <Layout><Settings /></Layout>} />
-      <Route component={() => <Layout><NotFound /></Layout>} />
+      <Route path="/" component={HomePage} />
+      <Route path="/reports" component={ReportsPage} />
+      <Route path="/bills" component={BillsPage} />
+      <Route path="/settings" component={SettingsPage} />
+      <Route component={NotFoundPage} />
     </Switch>
   );
 }
