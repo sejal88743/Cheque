@@ -55,7 +55,8 @@ export const CreateChequeEntryBody = zod.object({
   "partyName": zod.string(),
   "chequeAmount": zod.number(),
   "chequeNo": zod.string(),
-  "bankName": zod.string()
+  "bankName": zod.string(),
+  "discrepancyAmt": zod.number().nullish()
 })
 
 

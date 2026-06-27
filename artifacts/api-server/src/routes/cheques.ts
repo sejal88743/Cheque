@@ -65,6 +65,7 @@ router.get("/cheque-entries", async (req, res): Promise<void> => {
   const result = entries.map((e) => ({
     ...e,
     chequeAmount: parseFloat(e.chequeAmount),
+    discrepancyAmt: e.discrepancyAmt != null ? parseFloat(e.discrepancyAmt) : 0,
     updatedAt: e.updatedAt ? e.updatedAt.toISOString() : null,
     createdAt: e.createdAt.toISOString(),
   }));
@@ -113,12 +114,14 @@ router.post("/cheque-entries", async (req, res): Promise<void> => {
     .values({
       ...parsed.data,
       chequeAmount: String(parsed.data.chequeAmount),
+      discrepancyAmt: parsed.data.discrepancyAmt != null ? String(parsed.data.discrepancyAmt) : "0",
     })
     .returning();
 
   res.status(201).json({
     ...entry,
     chequeAmount: parseFloat(entry.chequeAmount),
+    discrepancyAmt: entry.discrepancyAmt != null ? parseFloat(entry.discrepancyAmt) : 0,
     updatedAt: entry.updatedAt ? entry.updatedAt.toISOString() : null,
     createdAt: entry.createdAt.toISOString(),
   });

@@ -18,6 +18,7 @@ interface GroupedRow {
   billNos: string;
   partyNames: string;
   rowCount: number;
+  isDiscrepant: boolean;
 }
 
 const fmtDate = (d: string | null) => {
@@ -56,6 +57,11 @@ const groupRows = (rows: SupaBill[]): GroupedRow[] => {
       const totalAmt = grp.reduce((s, r) => s + Number(r.cheque_amount ?? 0), 0);
       const billNos = grp.map(r => extractBillNum(r.bill_no)).filter(Boolean).join("+");
       const parties = [...new Set(grp.map(r => r.party_name).filter(Boolean))].join(", ");
+      const isDiscrepant = grp.some(r =>
+        r.outstanding_amount != null &&
+        r.cheque_amount != null &&
+        Math.abs(Number(r.cheque_amount) - Number(r.outstanding_amount)) > 0.01
+      );
       return {
         chequeDate: first.cheque_date,
         chequeNo: first.cheque_no ?? "—",
@@ -64,6 +70,7 @@ const groupRows = (rows: SupaBill[]): GroupedRow[] => {
         billNos,
         partyNames: parties,
         rowCount: grp.length,
+        isDiscrepant,
       };
     })
     .sort((a, b) => {
@@ -103,7 +110,7 @@ export default function Reports() {
       while (true) {
         let q = supabase
           .from("bills")
-          .select("cheque_no,cheque_date,bank_name,cheque_amount,bill_no,party_name,bill_net_amt,payment_mode,payment_date")
+          .select("cheque_no,cheque_date,bank_name,cheque_amount,bill_no,party_name,bill_net_amt,payment_mode,payment_date,outstanding_amount")
           .not("cheque_no", "is", null)
           .ilike("payment_mode", "%cheque%")
           .order("cheque_date", { ascending: false })
@@ -117,7 +124,7 @@ export default function Reports() {
 
         const { data, error } = await q;
         if (error) throw error;
-        allRows = allRows.concat(data ?? []);
+        allRows = allRows.concat((data ?? []) as SupaBill[]);
         if (!data || data.length < PAGE_SIZE) break;
         from += PAGE_SIZE;
       }
@@ -280,7 +287,7 @@ export default function Reports() {
                 </TableHeader>
                 <TableBody>
                   {grouped.map((row, i) => (
-                    <TableRow key={i} className="print:border-b print:border-gray-400">
+                    <TableRow key={i} className={`print:border-b print:border-gray-400 ${row.isDiscrepant ? "text-red-600 font-semibold bg-red-50 print:text-red-700" : ""}`}>
                       <TableCell className="py-2 print:py-1">{fmtDate(row.chequeDate)}</TableCell>
                       <TableCell className="py-2 print:py-1 text-right font-bold text-primary print:text-black">
                         {fmtINR(row.chequeAmt)}

@@ -1,4 +1,6 @@
 import { useState, useRef } from "react";
+import { format } from "date-fns";
+import { batchLookupOutstandingAmounts, updateBillFromImport } from "@/lib/supabase";
 import { useGetSettings, useUpdateSettings, useListBanks, useCreateBank, useDeleteBank, getListBanksQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -177,7 +179,31 @@ export default function Settings() {
     }
   };
 
-  const saveEntry = async (entry: ParsedImportEntry): Promise<'saved' | 'duplicate' | 'error'> => {
+  const splitAmounts = (
+    billNos: string[],
+    chequeTotal: number,
+    outstandingMap: Map<string, number>
+  ): { billNo: string; amount: number }[] => {
+    if (billNos.length === 1) return [{ billNo: billNos[0], amount: chequeTotal }];
+    const outs = billNos.map(b => ({ billNo: b, outstanding: outstandingMap.get(b) ?? 0 }));
+    const totalOut = outs.reduce((s, b) => s + b.outstanding, 0);
+    let rem = chequeTotal;
+    return outs.map((b, i) => {
+      if (i === outs.length - 1) return { billNo: b.billNo, amount: Math.round(rem * 100) / 100 };
+      const amt = totalOut > 0
+        ? Math.round(chequeTotal * b.outstanding / totalOut * 100) / 100
+        : Math.round(chequeTotal / outs.length * 100) / 100;
+      rem -= amt;
+      return { billNo: b.billNo, amount: amt };
+    });
+  };
+
+  const saveSingleBillEntry = async (
+    entry: ParsedImportEntry,
+    billNo: string,
+    amount: number,
+    discrepancyAmt: number
+  ): Promise<'saved' | 'duplicate' | 'error'> => {
     try {
       const res = await fetch('/api/cheque-entries', {
         method: 'POST',
@@ -186,10 +212,11 @@ export default function Settings() {
           entryDate: entry.entryDate,
           chequeDate: entry.chequeDate,
           partyName: entry.partyName,
-          billNos: entry.billNos,
-          chequeAmount: entry.chequeAmount,
+          billNos: [billNo],
+          chequeAmount: amount,
           chequeNo: entry.chequeNo,
           bankName: entry.bankName,
+          discrepancyAmt,
         }),
       });
       if (res.status === 409) return 'duplicate';
@@ -208,19 +235,46 @@ export default function Settings() {
 
     const result: ImportResult = { saved: 0, duplicates: 0, errors: 0, banksCreated: 0 };
     const existingBankNames = new Set<string>((banks ?? []).map((b: { name: string }) => b.name.toUpperCase()));
-    const total = importPreview.entries.length;
+    const entries = importPreview.entries;
+    const total = entries.length;
     setImportTotal(total);
 
+    const allBillNos = [...new Set(entries.flatMap(e => e.billNos))];
+    let outstandingMap = new Map<string, number>();
+    try {
+      outstandingMap = await batchLookupOutstandingAmounts(allBillNos);
+    } catch (e) {
+      toast({ variant: "destructive", title: "Supabase lookup failed", description: String(e) });
+    }
+
     for (let i = 0; i < total; i++) {
-      const entry = importPreview.entries[i];
+      const entry = entries[i];
 
       const created = await ensureBankExists(entry.bankName, existingBankNames);
       if (created) result.banksCreated++;
 
-      const status = await saveEntry(entry);
-      if (status === 'saved') result.saved++;
-      else if (status === 'duplicate') result.duplicates++;
-      else result.errors++;
+      const splits = splitAmounts(entry.billNos, entry.chequeAmount, outstandingMap);
+      const totalOut = entry.billNos.reduce((s, b) => s + (outstandingMap.get(b) ?? 0), 0);
+      const discrepancyAmt = Math.round((entry.chequeAmount - totalOut) * 100) / 100;
+
+      for (const split of splits) {
+        const status = await saveSingleBillEntry(entry, split.billNo, split.amount, discrepancyAmt);
+        if (status === 'saved') {
+          result.saved++;
+          try {
+            await updateBillFromImport(split.billNo, {
+              cheque_date: entry.chequeDate,
+              bank_name: entry.bankName,
+              cheque_no: entry.chequeNo,
+              cheque_amount: split.amount,
+              collected_amount: split.amount,
+              payment_mode: 'Cheque',
+              payment_date: format(new Date(entry.entryDate), 'dd/MM/yyyy'),
+            });
+          } catch { /* Supabase update failures are non-fatal */ }
+        } else if (status === 'duplicate') result.duplicates++;
+        else result.errors++;
+      }
 
       setImportProgress(i + 1);
     }

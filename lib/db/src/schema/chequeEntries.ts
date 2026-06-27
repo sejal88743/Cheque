@@ -11,6 +11,7 @@ export const chequeEntriesTable = pgTable("cheque_entries", {
   chequeAmount: numeric("cheque_amount", { precision: 12, scale: 2 }).notNull(),
   chequeNo: text("cheque_no").notNull(),
   bankName: text("bank_name").notNull(),
+  discrepancyAmt: numeric("discrepancy_amt", { precision: 12, scale: 2 }).default("0"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }),
 });

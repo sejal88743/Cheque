@@ -464,7 +464,7 @@ export default function Home() {
               className="h-11 bg-white"
             />
             <datalist id="bank-list">
-              {banks?.map(b => <option key={b.id} value={b.name} />)}
+              {banks?.map((b: { id: number; name: string }) => <option key={b.id} value={b.name} />)}
             </datalist>
           </div>
 

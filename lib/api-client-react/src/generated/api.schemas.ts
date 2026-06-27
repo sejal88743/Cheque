@@ -19,6 +19,8 @@ export interface ChequeEntry {
   chequeAmount: number;
   chequeNo: string;
   bankName: string;
+  /** Non-zero when cheque amount doesn't match sum of outstanding amounts */
+  discrepancyAmt?: number | null;
   createdAt: string;
   /** @nullable */
   updatedAt?: string | null;
@@ -32,6 +34,7 @@ export interface ChequeEntryInput {
   chequeAmount: number;
   chequeNo: string;
   bankName: string;
+  discrepancyAmt?: number | null;
 }
 
 export interface ChequeEntryUpdate {
@@ -42,6 +45,7 @@ export interface ChequeEntryUpdate {
   chequeAmount?: number;
   chequeNo?: string;
   bankName?: string;
+  discrepancyAmt?: number | null;
 }
 
 export interface ChequeStats {

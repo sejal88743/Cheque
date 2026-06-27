@@ -82,3 +82,35 @@ export async function updateBillInSupabase(
     .eq('bill_no', billNo);
   if (error) throw error;
 }
+
+export async function batchLookupOutstandingAmounts(billNos: string[]): Promise<Map<string, number>> {
+  if (billNos.length === 0) return new Map();
+  const { data } = await supabase
+    .from('bills')
+    .select('bill_no, outstanding_amount')
+    .in('bill_no', billNos);
+  const map = new Map<string, number>();
+  for (const row of data ?? []) {
+    if (row.bill_no != null) map.set(String(row.bill_no), row.outstanding_amount ?? 0);
+  }
+  return map;
+}
+
+export async function updateBillFromImport(
+  billNo: string,
+  data: {
+    cheque_date: string;
+    bank_name: string;
+    cheque_no: string;
+    cheque_amount: number;
+    collected_amount: number;
+    payment_mode: string;
+    payment_date: string;
+  }
+): Promise<void> {
+  const { error } = await supabase
+    .from('bills')
+    .update(data)
+    .eq('bill_no', billNo);
+  if (error) console.warn('Supabase bill update warning:', billNo, error.message);
+}
