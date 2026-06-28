@@ -102,14 +102,31 @@ export default function Home() {
     setTimeout(() => billNoRef.current?.focus(), 100);
   };
 
+  const parseChequeDateDay = (dateStr: string): string => {
+    try {
+      // Handle dd/MM/yyyy format from Supabase
+      if (/^\d{2}\/\d{2}\/\d{4}$/.test(dateStr)) {
+        const [dd] = dateStr.split("/");
+        return dd;
+      }
+      // Handle ISO format yyyy-MM-dd
+      return format(new Date(dateStr), "dd");
+    } catch {
+      return "";
+    }
+  };
+
   const applySupabaseBill = (data: SupaBill) => {
     if (data.party_name) setPartyName(data.party_name);
     if (data.cheque_no) setChequeNo(data.cheque_no);
     if (data.bank_name) setBankName(data.bank_name);
-    if (data.cheque_amount) setChequeAmount(String(data.cheque_amount));
+    // Use outstanding_amount as fallback when cheque_amount is not yet set
+    const amt = data.cheque_amount || data.outstanding_amount || data.bill_net_amt;
+    if (amt) setChequeAmount(String(amt));
     if (data.bill_net_amt != null) setBillNetAmt(Number(data.bill_net_amt));
     if (data.cheque_date) {
-      try { setChequeDay(format(new Date(data.cheque_date), "dd")); } catch {}
+      const day = parseChequeDateDay(data.cheque_date);
+      if (day) setChequeDay(day);
     }
   };
 
@@ -119,6 +136,25 @@ export default function Home() {
       if (!res.ok) return null;
       const list = await res.json();
       return list?.[0] ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  const loadLinkedLocalBills = async (chequeNo: string, bankName: string): Promise<BillItem[] | null> => {
+    try {
+      const res = await fetch(`/api/cheque-entries?chequeNo=${encodeURIComponent(chequeNo)}`);
+      if (!res.ok) return null;
+      const list: any[] = await res.json();
+      if (list.length <= 1) return null;
+      const filtered = list.filter(e => e.bankName?.toUpperCase() === bankName.toUpperCase());
+      if (filtered.length <= 1) return null;
+      return filtered.map(e => ({
+        billNo: e.billNos?.[0] ?? "",
+        partyName: e.partyName ?? "",
+        amount: Number(e.chequeAmount ?? 0),
+        outstanding: Number(e.chequeAmount ?? 0),
+      }));
     } catch {
       return null;
     }
@@ -135,10 +171,24 @@ export default function Home() {
         setPartyName(local.partyName ?? "");
         setChequeNo(local.chequeNo ?? "");
         setBankName(local.bankName ?? "");
-        setChequeAmount(String(local.chequeAmount ?? ""));
         if (local.chequeDate) {
           try { setChequeDay(format(new Date(local.chequeDate), "dd")); } catch {}
         }
+
+        // Check for linked bills in local DB via same cheque_no
+        if (local.chequeNo && local.bankName) {
+          const linkedLocal = await loadLinkedLocalBills(local.chequeNo, local.bankName);
+          if (linkedLocal && linkedLocal.length > 1) {
+            const total = linkedLocal.reduce((s, b) => s + b.amount, 0);
+            setChequeAmount(String(total));
+            setMultiBills(linkedLocal);
+            setChequeTotal(total);
+            setNextBillInput("");
+            setMultiBillOpen(true);
+            return;
+          }
+        }
+        setChequeAmount(String(local.chequeAmount ?? ""));
         focusNext(partyRef);
         return;
       }
@@ -155,6 +205,7 @@ export default function Home() {
       const outstanding = Number(data.outstanding_amount ?? data.bill_net_amt ?? 0);
       const chqAmt = Number(data.cheque_amount ?? 0);
 
+      // Already paid via cheque — load all linked bills from Supabase
       if (data.cheque_no && data.bank_name) {
         const linked = await lookupLinkedBillsByChequNo(data.cheque_no, data.bank_name);
         if (linked.length > 1) {
@@ -165,6 +216,8 @@ export default function Home() {
             amount: b.cheque_amount ?? b.outstanding_amount ?? 0,
             outstanding: b.outstanding_amount ?? 0,
           }));
+          // Set total on amount field and multi-bill state
+          setChequeAmount(String(totalChq || chqAmt));
           setMultiBills(bills);
           setChequeTotal(totalChq || chqAmt);
           setNextBillInput("");
@@ -173,6 +226,7 @@ export default function Home() {
         }
       }
 
+      // Fresh single bill — cheque_amount > outstanding means multi-bill cheque
       if (chqAmt > 0 && outstanding > 0 && chqAmt > outstanding) {
         const firstBill: BillItem = {
           billNo: data.bill_no ?? input.trim(),
