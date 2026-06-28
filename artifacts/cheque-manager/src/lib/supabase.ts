@@ -72,6 +72,8 @@ export async function updateBillInSupabase(
     cheque_date?: string;
     bank_name?: string;
     cheque_no?: string;
+    cheque_amount?: number;
+    collected_amount?: number;
     next_bill_no?: string | null;
     payment_date?: string | null;
   }
@@ -94,6 +96,17 @@ export async function batchLookupOutstandingAmounts(billNos: string[]): Promise<
     if (row.bill_no != null) map.set(String(row.bill_no), row.outstanding_amount ?? 0);
   }
   return map;
+}
+
+export async function lookupLinkedBillsByChequNo(chequeNo: string, bankName: string): Promise<SupaBill[]> {
+  if (!chequeNo) return [];
+  const { data } = await supabase
+    .from('bills')
+    .select('*')
+    .eq('cheque_no', chequeNo)
+    .ilike('bank_name', bankName)
+    .order('bill_no', { ascending: true });
+  return data ?? [];
 }
 
 export async function updateBillFromImport(

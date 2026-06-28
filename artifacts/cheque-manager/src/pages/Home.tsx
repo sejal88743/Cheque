@@ -24,13 +24,14 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { lookupBillFromSupabase, updateBillInSupabase, SupaBill } from "@/lib/supabase";
+import { lookupBillFromSupabase, lookupLinkedBillsByChequNo, updateBillInSupabase, SupaBill } from "@/lib/supabase";
 import { Badge } from "@/components/ui/badge";
 
 interface BillItem {
   billNo: string;
   partyName: string;
   amount: number;
+  outstanding: number;
 }
 
 const fmtINR = (n: number) =>
@@ -151,14 +152,33 @@ export default function Home() {
       setSupaBillNo(data.bill_no ?? input.trim());
       applySupabaseBill(data);
 
-      const billNetAmt = Number(data.bill_net_amt ?? 0);
+      const outstanding = Number(data.outstanding_amount ?? data.bill_net_amt ?? 0);
       const chqAmt = Number(data.cheque_amount ?? 0);
 
-      if (chqAmt > 0 && billNetAmt > 0 && chqAmt > billNetAmt) {
+      if (data.cheque_no && data.bank_name) {
+        const linked = await lookupLinkedBillsByChequNo(data.cheque_no, data.bank_name);
+        if (linked.length > 1) {
+          const totalChq = linked.reduce((s, b) => s + (b.cheque_amount ?? 0), 0);
+          const bills: BillItem[] = linked.map(b => ({
+            billNo: b.bill_no ?? "",
+            partyName: b.party_name ?? "",
+            amount: b.cheque_amount ?? b.outstanding_amount ?? 0,
+            outstanding: b.outstanding_amount ?? 0,
+          }));
+          setMultiBills(bills);
+          setChequeTotal(totalChq || chqAmt);
+          setNextBillInput("");
+          setMultiBillOpen(true);
+          return;
+        }
+      }
+
+      if (chqAmt > 0 && outstanding > 0 && chqAmt > outstanding) {
         const firstBill: BillItem = {
           billNo: data.bill_no ?? input.trim(),
           partyName: data.party_name ?? "",
-          amount: billNetAmt,
+          amount: outstanding,
+          outstanding,
         };
         setMultiBills([firstBill]);
         setChequeTotal(chqAmt);
@@ -197,11 +217,15 @@ export default function Home() {
         toast({ variant: "destructive", title: "Bill not found", description: `No bill found for "${inp}"` });
         return;
       }
-      const billNetAmt = Number(data.bill_net_amt ?? 0);
+      const outstandingAmt = Number(data.outstanding_amount ?? data.bill_net_amt ?? 0);
+      const currentTotal = multiBills.reduce((s, b) => s + b.amount, 0);
+      const remaining = chequeTotal - currentTotal;
+      const assignedAmt = outstandingAmt <= remaining ? outstandingAmt : remaining;
       setMultiBills(prev => [...prev, {
         billNo: data.bill_no ?? inp,
         partyName: data.party_name ?? partyName,
-        amount: billNetAmt,
+        amount: assignedAmt,
+        outstanding: outstandingAmt,
       }]);
       setNextBillInput("");
       setTimeout(() => nextBillRef.current?.focus(), 50);
@@ -215,7 +239,21 @@ export default function Home() {
   const multiBillTotal = multiBills.reduce((s, b) => s + b.amount, 0);
   const multiBillRemaining = chequeTotal - multiBillTotal;
 
+  const lastBillMismatch = multiBills.length > 1 && (() => {
+    const lastBill = multiBills[multiBills.length - 1];
+    const othersTotal = multiBills.slice(0, -1).reduce((s, b) => s + b.amount, 0);
+    const lastAllocated = chequeTotal - othersTotal;
+    return Math.abs(lastAllocated - lastBill.outstanding) > 0.01;
+  })();
+
   const confirmMultiBills = () => {
+    if (multiBills.length > 1) {
+      const othersTotal = multiBills.slice(0, -1).reduce((s, b) => s + b.outstanding, 0);
+      const lastAmount = Math.round((chequeTotal - othersTotal) * 100) / 100;
+      setMultiBills(prev => prev.map((b, i) =>
+        i === prev.length - 1 ? { ...b, amount: lastAmount } : { ...b, amount: b.outstanding }
+      ));
+    }
     setMultiBillOpen(false);
     focusNext(chequeNoRef);
   };
@@ -230,7 +268,7 @@ export default function Home() {
 
   const doSave = async (force = false) => {
     const chequeDate = buildChequeDate();
-    const billsToSave = multiBills.length > 0 ? multiBills : [{ billNo, partyName, amount: Number(chequeAmount) }];
+    const billsToSave = multiBills.length > 0 ? multiBills : [{ billNo, partyName, amount: Number(chequeAmount), outstanding: Number(chequeAmount) }];
 
     if (!partyName || !chequeNo || !bankName || !chequeDay) {
       toast({ variant: "destructive", title: "Missing fields", description: "Please fill all required fields." });
@@ -278,6 +316,8 @@ export default function Home() {
               cheque_date: chequeDate,
               bank_name: bankName,
               cheque_no: chequeNo,
+              cheque_amount: bill.amount,
+              collected_amount: bill.amount,
               next_bill_no: nextBillNo,
               payment_date: format(new Date(entryDate), "dd/MM/yyyy"),
             });
@@ -376,12 +416,20 @@ export default function Home() {
                 <span className="text-xs font-bold text-amber-800">Multi-Bill ({multiBills.length} bills)</span>
                 <span className="text-xs text-amber-700">Total: {fmtINR(multiBillTotal)} / {fmtINR(chequeTotal)}</span>
               </div>
-              {multiBills.map((b, i) => (
-                <div key={i} className="flex justify-between text-xs text-amber-900 bg-white rounded px-2 py-1 border border-amber-100">
-                  <span className="font-mono">{b.billNo}</span>
-                  <span className="font-medium">{fmtINR(b.amount)}</span>
-                </div>
-              ))}
+              {multiBills.map((b, i) => {
+                const isLast = i === multiBills.length - 1;
+                const othersOut = multiBills.slice(0, i).reduce((s, x) => s + x.outstanding, 0);
+                const effectiveAmt = isLast && multiBills.length > 1
+                  ? Math.round((chequeTotal - othersOut) * 100) / 100
+                  : b.outstanding || b.amount;
+                const mismatch = isLast && multiBills.length > 1 && Math.abs(effectiveAmt - b.outstanding) > 0.01;
+                return (
+                  <div key={i} className="flex justify-between text-xs text-amber-900 bg-white rounded px-2 py-1 border border-amber-100">
+                    <span className="font-mono">{b.billNo}</span>
+                    <span className={`font-medium ${mismatch ? "text-red-600 font-bold" : ""}`}>{fmtINR(effectiveAmt)}</span>
+                  </div>
+                );
+              })}
               <Button
                 variant="outline"
                 size="sm"
@@ -512,27 +560,47 @@ export default function Home() {
             </div>
 
             <div className="space-y-2 max-h-48 overflow-y-auto">
-              {multiBills.map((b, i) => (
-                <div key={i} className="flex items-center gap-2 p-2 bg-white border rounded-md">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-mono font-bold text-primary">{b.billNo}</p>
-                    <p className="text-xs text-muted-foreground truncate">{b.partyName}</p>
+              {multiBills.map((b, i) => {
+                const isLast = i === multiBills.length - 1;
+                const othersTotal = multiBills.slice(0, i).reduce((s, x) => s + x.outstanding, 0);
+                const effectiveAmt = isLast && multiBills.length > 1
+                  ? Math.round((chequeTotal - othersTotal) * 100) / 100
+                  : b.outstanding || b.amount;
+                const mismatch = isLast && multiBills.length > 1 && Math.abs(effectiveAmt - b.outstanding) > 0.01;
+                return (
+                  <div key={i} className={`flex items-center gap-2 p-2 bg-white border rounded-md ${mismatch ? "border-red-300 bg-red-50" : ""}`}>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-mono font-bold text-primary">{b.billNo}</p>
+                      <p className="text-xs text-muted-foreground truncate">{b.partyName}</p>
+                      {b.outstanding > 0 && (
+                        <p className="text-xs text-muted-foreground">Outstanding: {fmtINR(b.outstanding)}</p>
+                      )}
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <span className={`text-sm font-bold whitespace-nowrap ${mismatch ? "text-red-600" : "text-green-700"}`}>
+                        {fmtINR(effectiveAmt)}
+                      </span>
+                      {mismatch && (
+                        <p className="text-xs text-red-500">
+                          {effectiveAmt > b.outstanding ? `+${fmtINR(effectiveAmt - b.outstanding)}` : `-${fmtINR(b.outstanding - effectiveAmt)}`}
+                        </p>
+                      )}
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-destructive hover:bg-destructive/10 flex-shrink-0"
+                      onClick={() => setMultiBills(prev => prev.filter((_, idx) => idx !== i))}
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
                   </div>
-                  <span className="text-sm font-bold text-green-700 whitespace-nowrap">{fmtINR(b.amount)}</span>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 text-destructive hover:bg-destructive/10 flex-shrink-0"
-                    onClick={() => setMultiBills(prev => prev.filter((_, idx) => idx !== i))}
-                  >
-                    <X className="h-3 w-3" />
-                  </Button>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
-            <div className={`flex justify-between text-sm font-semibold p-2 rounded-lg border-2 ${multiBillRemaining === 0 ? "bg-green-50 border-green-300 text-green-800" : multiBillRemaining < 0 ? "bg-red-50 border-red-300 text-red-800" : "bg-amber-50 border-amber-300 text-amber-800"}`}>
-              <span>{multiBillRemaining === 0 ? "✓ Sab match!" : multiBillRemaining < 0 ? "⚠ Zyada amount!" : "Baaki raha:"}</span>
+            <div className={`flex justify-between text-sm font-semibold p-2 rounded-lg border-2 ${lastBillMismatch ? "bg-red-50 border-red-300 text-red-800" : multiBillRemaining === 0 ? "bg-green-50 border-green-300 text-green-800" : "bg-amber-50 border-amber-300 text-amber-800"}`}>
+              <span>{lastBillMismatch ? "⚠ Last bill amount mismatch!" : multiBillRemaining === 0 ? "✓ Sab match!" : "Baaki raha:"}</span>
               <span>{multiBillRemaining !== 0 && fmtINR(Math.abs(multiBillRemaining))}</span>
             </div>
 
@@ -558,10 +626,14 @@ export default function Home() {
             <Button variant="outline" onClick={() => setMultiBillOpen(false)}>Cancel</Button>
             <Button
               onClick={confirmMultiBills}
-              disabled={multiBillRemaining !== 0}
-              className="bg-green-600 hover:bg-green-700 text-white"
+              disabled={multiBills.length < 2 && multiBillRemaining > 0}
+              className={lastBillMismatch ? "bg-orange-500 hover:bg-orange-600 text-white" : "bg-green-600 hover:bg-green-700 text-white"}
             >
-              {multiBillRemaining === 0 ? "✓ Confirm All Bills" : "Pehle baaki bills add karo"}
+              {multiBills.length < 2
+                ? "Pehle bills add karo"
+                : lastBillMismatch
+                ? "⚠ Mismatch ke saath Confirm"
+                : "✓ Confirm All Bills"}
             </Button>
           </DialogFooter>
         </DialogContent>

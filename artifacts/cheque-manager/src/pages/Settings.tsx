@@ -185,16 +185,14 @@ export default function Settings() {
     outstandingMap: Map<string, number>
   ): { billNo: string; amount: number }[] => {
     if (billNos.length === 1) return [{ billNo: billNos[0], amount: chequeTotal }];
-    const outs = billNos.map(b => ({ billNo: b, outstanding: outstandingMap.get(b) ?? 0 }));
-    const totalOut = outs.reduce((s, b) => s + b.outstanding, 0);
     let rem = chequeTotal;
-    return outs.map((b, i) => {
-      if (i === outs.length - 1) return { billNo: b.billNo, amount: Math.round(rem * 100) / 100 };
-      const amt = totalOut > 0
-        ? Math.round(chequeTotal * b.outstanding / totalOut * 100) / 100
-        : Math.round(chequeTotal / outs.length * 100) / 100;
+    return billNos.map((billNo, i) => {
+      const isLast = i === billNos.length - 1;
+      if (isLast) return { billNo, amount: Math.round(rem * 100) / 100 };
+      const outstanding = outstandingMap.get(billNo) ?? 0;
+      const amt = Math.round(outstanding * 100) / 100;
       rem -= amt;
-      return { billNo: b.billNo, amount: amt };
+      return { billNo, amount: amt };
     });
   };
 
