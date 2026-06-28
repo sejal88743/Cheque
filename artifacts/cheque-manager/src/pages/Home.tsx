@@ -165,39 +165,42 @@ export default function Home() {
     setLookupLoading(true);
     setBillSource(null);
     try {
+      // Step 1: Check local PostgreSQL DB first
       const local = await checkLocalDB(input.trim());
       if (local) {
         setBillSource("localdb");
         setPartyName(local.partyName ?? "");
         setChequeNo(local.chequeNo ?? "");
         setBankName(local.bankName ?? "");
+        setChequeAmount(String(local.chequeAmount ?? ""));
         if (local.chequeDate) {
           try { setChequeDay(format(new Date(local.chequeDate), "dd")); } catch {}
         }
-
-        // Check for linked bills in local DB via same cheque_no
-        if (local.chequeNo && local.bankName) {
-          const linkedLocal = await loadLinkedLocalBills(local.chequeNo, local.bankName);
-          if (linkedLocal && linkedLocal.length > 1) {
-            const total = linkedLocal.reduce((s, b) => s + b.amount, 0);
-            setChequeAmount(String(total));
-            setMultiBills(linkedLocal);
-            setChequeTotal(total);
-            setNextBillInput("");
-            setMultiBillOpen(true);
-            return;
-          }
-        }
-        setChequeAmount(String(local.chequeAmount ?? ""));
         focusNext(partyRef);
+        // Non-blocking: load linked local bills silently after fields are filled
+        if (local.chequeNo && local.bankName) {
+          loadLinkedLocalBills(local.chequeNo, local.bankName).then(linkedLocal => {
+            if (linkedLocal && linkedLocal.length > 1) {
+              const total = linkedLocal.reduce((s, b) => s + b.amount, 0);
+              setChequeAmount(String(total));
+              setMultiBills(linkedLocal);
+              setChequeTotal(total);
+              setNextBillInput("");
+              setMultiBillOpen(true);
+            }
+          }).catch(() => {});
+        }
         return;
       }
 
+      // Step 2: Check Supabase
       const data = await lookupBillFromSupabase(input.trim());
       if (!data) {
         focusNext(partyRef);
         return;
       }
+
+      // Fill all main fields immediately from Supabase data
       setBillSource("supabase");
       setSupaBillNo(data.bill_no ?? input.trim());
       applySupabaseBill(data);
@@ -205,28 +208,27 @@ export default function Home() {
       const outstanding = Number(data.outstanding_amount ?? data.bill_net_amt ?? 0);
       const chqAmt = Number(data.cheque_amount ?? 0);
 
-      // Already paid via cheque — load all linked bills from Supabase
+      // Non-blocking: load linked bills silently — won't break main field fill even if it fails
       if (data.cheque_no && data.bank_name) {
-        const linked = await lookupLinkedBillsByChequNo(data.cheque_no, data.bank_name);
-        if (linked.length > 1) {
-          const totalChq = linked.reduce((s, b) => s + (b.cheque_amount ?? 0), 0);
-          const bills: BillItem[] = linked.map(b => ({
-            billNo: b.bill_no ?? "",
-            partyName: b.party_name ?? "",
-            amount: b.cheque_amount ?? b.outstanding_amount ?? 0,
-            outstanding: b.outstanding_amount ?? 0,
-          }));
-          // Set total on amount field and multi-bill state
-          setChequeAmount(String(totalChq || chqAmt));
-          setMultiBills(bills);
-          setChequeTotal(totalChq || chqAmt);
-          setNextBillInput("");
-          setMultiBillOpen(true);
-          return;
-        }
+        lookupLinkedBillsByChequNo(data.cheque_no, data.bank_name).then(linked => {
+          if (linked.length > 1) {
+            const totalChq = linked.reduce((s, b) => s + (b.cheque_amount ?? 0), 0);
+            const bills: BillItem[] = linked.map(b => ({
+              billNo: b.bill_no ?? "",
+              partyName: b.party_name ?? "",
+              amount: b.cheque_amount ?? b.outstanding_amount ?? 0,
+              outstanding: b.outstanding_amount ?? 0,
+            }));
+            setChequeAmount(String(totalChq || chqAmt));
+            setMultiBills(bills);
+            setChequeTotal(totalChq || chqAmt);
+            setNextBillInput("");
+            setMultiBillOpen(true);
+          }
+        }).catch(() => {});
       }
 
-      // Fresh single bill — cheque_amount > outstanding means multi-bill cheque
+      // Single bill multi-cheque detection
       if (chqAmt > 0 && outstanding > 0 && chqAmt > outstanding) {
         const firstBill: BillItem = {
           billNo: data.bill_no ?? input.trim(),
