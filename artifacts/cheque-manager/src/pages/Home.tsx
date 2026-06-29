@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef } from "react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -102,158 +102,112 @@ export default function Home() {
     setTimeout(() => billNoRef.current?.focus(), 100);
   };
 
-  const parseChequeDateDay = (dateStr: string): string => {
-    try {
-      // Handle dd/MM/yyyy format from Supabase
-      if (/^\d{2}\/\d{2}\/\d{4}$/.test(dateStr)) {
-        const [dd] = dateStr.split("/");
-        return dd;
-      }
-      // Handle ISO format yyyy-MM-dd
-      return format(new Date(dateStr), "dd");
-    } catch {
-      return "";
-    }
-  };
-
-  const applySupabaseBill = (data: SupaBill) => {
-    if (data.party_name) setPartyName(data.party_name);
-    if (data.cheque_no) setChequeNo(data.cheque_no);
-    if (data.bank_name) setBankName(data.bank_name);
-    // Use outstanding_amount as fallback when cheque_amount is not yet set
-    const amt = data.cheque_amount || data.outstanding_amount || data.bill_net_amt;
-    if (amt) setChequeAmount(String(amt));
-    if (data.bill_net_amt != null) setBillNetAmt(Number(data.bill_net_amt));
-    if (data.cheque_date) {
-      const day = parseChequeDateDay(data.cheque_date);
-      if (day) setChequeDay(day);
-    }
-  };
-
-  const checkLocalDB = async (bill: string): Promise<any | null> => {
-    try {
-      const res = await fetch(`/api/cheque-entries?billNo=${encodeURIComponent(bill)}`);
-      if (!res.ok) return null;
-      const list = await res.json();
-      return list?.[0] ?? null;
-    } catch {
-      return null;
-    }
-  };
-
-  const loadLinkedLocalBills = async (chequeNo: string, bankName: string): Promise<BillItem[] | null> => {
-    try {
-      const res = await fetch(`/api/cheque-entries?chequeNo=${encodeURIComponent(chequeNo)}`);
-      if (!res.ok) return null;
-      const list: any[] = await res.json();
-      if (list.length <= 1) return null;
-      const filtered = list.filter(e => e.bankName?.toUpperCase() === bankName.toUpperCase());
-      if (filtered.length <= 1) return null;
-      return filtered.map(e => ({
-        billNo: e.billNos?.[0] ?? "",
-        partyName: e.partyName ?? "",
-        amount: Number(e.chequeAmount ?? 0),
-        outstanding: Number(e.chequeAmount ?? 0),
-      }));
-    } catch {
-      return null;
-    }
-  };
-
-  const performLookup = useCallback(async (input: string) => {
-    if (!input.trim()) return;
+  const performLookup = async (input: string) => {
+    const trimmed = input.trim();
+    if (!trimmed) return;
+    if (lookupLoading) return;
     setLookupLoading(true);
     setBillSource(null);
     try {
-      // Step 1: Check local PostgreSQL DB first
-      const local = await checkLocalDB(input.trim());
-      if (local) {
-        setBillSource("localdb");
-        setPartyName(local.partyName ?? "");
-        setChequeNo(local.chequeNo ?? "");
-        setBankName(local.bankName ?? "");
-        setChequeAmount(String(local.chequeAmount ?? ""));
-        if (local.chequeDate) {
-          try { setChequeDay(format(new Date(local.chequeDate), "dd")); } catch {}
-        }
-        focusNext(partyRef);
-        // Non-blocking: load linked local bills silently after fields are filled
-        if (local.chequeNo && local.bankName) {
-          loadLinkedLocalBills(local.chequeNo, local.bankName).then(linkedLocal => {
-            if (linkedLocal && linkedLocal.length > 1) {
-              const total = linkedLocal.reduce((s, b) => s + b.amount, 0);
-              setChequeAmount(String(total));
-              setMultiBills(linkedLocal);
-              setChequeTotal(total);
-              setNextBillInput("");
-              setMultiBillOpen(true);
+      // Step 1: Local DB check
+      let localFound = false;
+      try {
+        const res = await fetch(`/api/cheque-entries?billNo=${encodeURIComponent(trimmed)}`);
+        if (res.ok) {
+          const list = await res.json();
+          const local = list?.[0];
+          if (local) {
+            localFound = true;
+            setBillSource("localdb");
+            setPartyName(local.partyName ?? "");
+            setChequeNo(local.chequeNo ?? "");
+            setBankName(local.bankName ?? "");
+            setChequeAmount(String(local.chequeAmount ?? ""));
+            if (local.chequeDate) {
+              try { setChequeDay(format(new Date(local.chequeDate), "dd")); } catch {}
             }
-          }).catch(() => {});
+            // Load linked bills in background
+            if (local.chequeNo && local.bankName) {
+              fetch(`/api/cheque-entries?chequeNo=${encodeURIComponent(local.chequeNo)}`)
+                .then(r => r.json())
+                .then((siblings: any[]) => {
+                  const linked = siblings.filter(e => e.bankName?.toUpperCase() === local.bankName?.toUpperCase());
+                  if (linked.length > 1) {
+                    const total = linked.reduce((s: number, e: any) => s + Number(e.chequeAmount ?? 0), 0);
+                    setChequeAmount(String(total));
+                    setMultiBills(linked.map((e: any) => ({ billNo: e.billNos?.[0] ?? "", partyName: e.partyName ?? "", amount: Number(e.chequeAmount ?? 0), outstanding: Number(e.chequeAmount ?? 0) })));
+                    setChequeTotal(total);
+                    setMultiBillOpen(true);
+                  }
+                }).catch(() => {});
+            }
+          }
         }
-        return;
-      }
+      } catch {}
 
-      // Step 2: Check Supabase
-      const data = await lookupBillFromSupabase(input.trim());
+      if (localFound) { focusNext(partyRef); return; }
+
+      // Step 2: Supabase lookup
+      const data = await lookupBillFromSupabase(trimmed);
       if (!data) {
+        toast({ title: `Bill "${trimmed}" nahi mila`, description: "Yeh bill Supabase mein nahi hai.", variant: "destructive", duration: 3000 });
         focusNext(partyRef);
         return;
       }
 
-      // Fill all main fields immediately from Supabase data
+      // Set all fields directly
       setBillSource("supabase");
-      setSupaBillNo(data.bill_no ?? input.trim());
-      applySupabaseBill(data);
+      setSupaBillNo(data.bill_no ?? trimmed);
+      if (data.party_name) setPartyName(data.party_name);
+      if (data.cheque_no) setChequeNo(data.cheque_no);
+      if (data.bank_name) setBankName(data.bank_name);
+      if (data.bill_net_amt != null) setBillNetAmt(Number(data.bill_net_amt));
 
       const outstanding = Number(data.outstanding_amount ?? data.bill_net_amt ?? 0);
       const chqAmt = Number(data.cheque_amount ?? 0);
+      const displayAmt = chqAmt || outstanding;
+      if (displayAmt) setChequeAmount(String(displayAmt));
 
-      // Non-blocking: load linked bills silently — won't break main field fill even if it fails
+      if (data.cheque_date) {
+        try {
+          if (/^\d{2}\/\d{2}\/\d{4}$/.test(data.cheque_date)) {
+            setChequeDay(data.cheque_date.split("/")[0]);
+          } else {
+            setChequeDay(format(new Date(data.cheque_date), "dd"));
+          }
+        } catch {}
+      }
+
+      // Load linked bills in background
       if (data.cheque_no && data.bank_name) {
         lookupLinkedBillsByChequNo(data.cheque_no, data.bank_name).then(linked => {
           if (linked.length > 1) {
             const totalChq = linked.reduce((s, b) => s + (b.cheque_amount ?? 0), 0);
-            const bills: BillItem[] = linked.map(b => ({
-              billNo: b.bill_no ?? "",
-              partyName: b.party_name ?? "",
-              amount: b.cheque_amount ?? b.outstanding_amount ?? 0,
-              outstanding: b.outstanding_amount ?? 0,
-            }));
             setChequeAmount(String(totalChq || chqAmt));
-            setMultiBills(bills);
+            setMultiBills(linked.map(b => ({ billNo: b.bill_no ?? "", partyName: b.party_name ?? "", amount: b.cheque_amount ?? b.outstanding_amount ?? 0, outstanding: b.outstanding_amount ?? 0 })));
             setChequeTotal(totalChq || chqAmt);
-            setNextBillInput("");
             setMultiBillOpen(true);
           }
         }).catch(() => {});
-      }
-
-      // Single bill multi-cheque detection
-      if (chqAmt > 0 && outstanding > 0 && chqAmt > outstanding) {
-        const firstBill: BillItem = {
-          billNo: data.bill_no ?? input.trim(),
-          partyName: data.party_name ?? "",
-          amount: outstanding,
-          outstanding,
-        };
-        setMultiBills([firstBill]);
+      } else if (chqAmt > 0 && outstanding > 0 && chqAmt > outstanding) {
+        setMultiBills([{ billNo: data.bill_no ?? trimmed, partyName: data.party_name ?? "", amount: outstanding, outstanding }]);
         setChequeTotal(chqAmt);
-        setNextBillInput("");
         setMultiBillOpen(true);
       } else {
         focusNext(partyRef);
       }
     } catch (err) {
-      focusNext(partyRef);
+      toast({ title: "Error", description: String(err), variant: "destructive", duration: 4000 });
     } finally {
       setLookupLoading(false);
     }
-  }, []);
+  };
 
   const handleBillNoKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
       e.preventDefault();
-      performLookup(billNo);
+      const val = (e.currentTarget as HTMLInputElement).value.trim();
+      performLookup(val || billNo);
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
       focusNext(partyRef);
@@ -443,27 +397,38 @@ export default function Home() {
 
           <div>
             <Label className="font-semibold text-xs mb-1 block">Bill No</Label>
-            <div className="relative">
-              <Input
-                ref={billNoRef}
-                type="text"
-                placeholder="e.g. 744 or GST00744"
-                value={billNo}
-                onChange={e => setBillNo(e.target.value)}
-                onKeyDown={handleBillNoKey}
-                className="h-11 bg-white pr-20"
-              />
-              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                {lookupLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-                {billSource === "supabase" && !lookupLoading && (
-                  <Badge variant="outline" className="text-xs text-green-700 border-green-400 bg-green-50">Supabase</Badge>
-                )}
-                {billSource === "localdb" && !lookupLoading && (
-                  <Badge variant="outline" className="text-xs text-blue-700 border-blue-400 bg-blue-50">Saved</Badge>
-                )}
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Input
+                  ref={billNoRef}
+                  type="text"
+                  placeholder="e.g. 744 or GST00744"
+                  value={billNo}
+                  onChange={e => setBillNo(e.target.value)}
+                  onKeyDown={handleBillNoKey}
+                  className="h-11 bg-white pr-20"
+                />
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                  {lookupLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                  {billSource === "supabase" && !lookupLoading && (
+                    <Badge variant="outline" className="text-xs text-green-700 border-green-400 bg-green-50">Supabase</Badge>
+                  )}
+                  {billSource === "localdb" && !lookupLoading && (
+                    <Badge variant="outline" className="text-xs text-blue-700 border-blue-400 bg-blue-50">Saved</Badge>
+                  )}
+                </div>
               </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 px-3 border-primary text-primary font-semibold"
+                disabled={lookupLoading || !billNo.trim()}
+                onClick={() => performLookup(billNo)}
+              >
+                {lookupLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Dhundho"}
+              </Button>
             </div>
-            <p className="text-xs text-muted-foreground mt-1">Enter karo to party + amount auto-fill hoga</p>
+            <p className="text-xs text-muted-foreground mt-1">Bill no type karo → "Dhundho" dabao ya Enter press karo</p>
           </div>
 
           {multiBills.length > 0 && (
