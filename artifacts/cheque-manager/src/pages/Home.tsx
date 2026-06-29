@@ -340,24 +340,29 @@ export default function Home() {
           for (let i = 0; i < multiBills.length; i++) {
             const bill = multiBills[i];
             const nextBillNo = i < multiBills.length - 1 ? multiBills[i + 1].billNo : null;
-            await updateBillInSupabase(bill.billNo, {
+            if (bill.billNo) {
+              await updateBillInSupabase(bill.billNo, {
+                cheque_date: chequeDate,
+                bank_name: bankName,
+                cheque_no: chequeNo,
+                cheque_amount: bill.amount,
+                collected_amount: bill.amount,
+                next_bill_no: nextBillNo,
+                payment_date: format(new Date(entryDate), "dd/MM/yyyy"),
+              });
+            }
+          }
+        } else {
+          const targetBillNo = supaBillNo || billNo.trim();
+          if (targetBillNo) {
+            await updateBillInSupabase(targetBillNo, {
               cheque_date: chequeDate,
               bank_name: bankName,
               cheque_no: chequeNo,
-              cheque_amount: bill.amount,
-              collected_amount: bill.amount,
-              next_bill_no: nextBillNo,
+              next_bill_no: null,
               payment_date: format(new Date(entryDate), "dd/MM/yyyy"),
             });
           }
-        } else if (supaBillNo) {
-          await updateBillInSupabase(supaBillNo, {
-            cheque_date: chequeDate,
-            bank_name: bankName,
-            cheque_no: chequeNo,
-            next_bill_no: null,
-            payment_date: format(new Date(entryDate), "dd/MM/yyyy"),
-          });
         }
       } catch (supaErr) {
         console.warn("Supabase update failed:", supaErr);
