@@ -26,13 +26,17 @@ export function parseBillNos(raw: string | number): string[] {
   const str = String(raw).trim();
   if (!str) return [];
 
-  const parts = str.split(/[+\-]/);
+  // Remove credit note references like "CN 241" or "CN241"
+  const withoutCN = str.replace(/CN\s*\d+/gi, ' ');
+
+  // Split on any separator: space, comma, hyphen, slash, plus
+  const parts = withoutCN.split(/[\s,+\-\/]+/);
   const result: string[] = [];
 
   for (const part of parts) {
-    const cleaned = part.replace(/\s*CN\s*.*/i, '').trim();
-    const num = cleaned.replace(/\s/g, '');
-    if (num && /^\d+$/.test(num)) result.push(num);
+    const trimmed = part.trim();
+    // Only pure numeric parts are valid bill numbers
+    if (trimmed && /^\d+$/.test(trimmed)) result.push(trimmed);
   }
 
   return [...new Set(result)];
@@ -95,7 +99,7 @@ export function sheetNameToDate(name: string, dateCellValue?: unknown): string {
 
 function findTableHeaders(rows: unknown[][]): Array<{
   snCol: number; amtCol: number; bankCol: number;
-  chqCol: number; billCol: number; partyCol: number;
+  chqCol: number; billCol: number; partyCol: number; dateCol: number;
 }> {
   const tables: ReturnType<typeof findTableHeaders> = [];
   const seenCols = new Set<number>();
@@ -107,8 +111,17 @@ function findTableHeaders(rows: unknown[][]): Array<{
       if (cell === 'S.NO' && !seenCols.has(c)) {
         const nextHeader = String(row[c + 1] ?? '').trim().toUpperCase();
         if (nextHeader.includes('AMOUNT') || nextHeader.includes('AMT')) {
+          // Find dateCol: scan remaining headers for "DATE" or "CHQ DATE"
+          let dateCol = -1;
+          for (let dc = c + 5; dc < Math.min(row.length, c + 12); dc++) {
+            const hdr = String(row[dc] ?? '').trim().toUpperCase();
+            if (hdr.includes('DATE') || hdr.includes('CHQ') || hdr.includes('CHEQ')) {
+              dateCol = dc;
+              break;
+            }
+          }
           seenCols.add(c);
-          tables.push({ snCol: c, amtCol: c + 1, bankCol: c + 2, chqCol: c + 3, billCol: c + 4, partyCol: c + 5 });
+          tables.push({ snCol: c, amtCol: c + 1, bankCol: c + 2, chqCol: c + 3, billCol: c + 4, partyCol: c + 5, dateCol });
         }
       }
     }
@@ -118,16 +131,16 @@ function findTableHeaders(rows: unknown[][]): Array<{
 }
 
 function parseSheetRows(rows: unknown[][], sheetName: string): ParsedImportEntry[] {
+  // Sheet-level date fallback: look at row 3 col 5, then sheet name
   const dateCellValue = (rows[3] as unknown[])?.[5];
-  const chequeDate = sheetNameToDate(sheetName, dateCellValue);
-  if (!chequeDate) return [];
+  const sheetLevelDate = sheetNameToDate(sheetName, dateCellValue);
 
   const tables = findTableHeaders(rows);
   if (tables.length === 0) return [];
 
   const entries: ParsedImportEntry[] = [];
 
-  for (const { snCol, amtCol, bankCol, chqCol, billCol, partyCol } of tables) {
+  for (const { snCol, amtCol, bankCol, chqCol, billCol, partyCol, dateCol } of tables) {
     for (const row of rows) {
       const r = row as unknown[];
       const sno = r[snCol];
@@ -146,9 +159,22 @@ function parseSheetRows(rows: unknown[][], sheetName: string): ParsedImportEntry
       const billNos = parseBillNos(billNoRaw as string | number);
       if (billNos.length === 0) continue;
 
+      // Per-row cheque date (column 7 / "cheq date") — overrides sheet-level date
+      let rowDate = sheetLevelDate;
+      if (dateCol >= 0) {
+        const rawDate = r[dateCol];
+        if (typeof rawDate === 'number' && rawDate > 40000) {
+          rowDate = excelSerialToDate(rawDate);
+        } else if (typeof rawDate === 'string' && rawDate.trim()) {
+          const parsed = sheetNameToDate(rawDate.trim(), undefined);
+          if (parsed) rowDate = parsed;
+        }
+      }
+      if (!rowDate) continue;
+
       entries.push({
-        chequeDate,
-        entryDate: chequeDate,
+        chequeDate: rowDate,
+        entryDate: rowDate,
         partyName,
         billNos,
         chequeAmount: amount,

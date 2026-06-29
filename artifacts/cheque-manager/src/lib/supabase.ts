@@ -123,7 +123,7 @@ export async function updateBillFromImport(
 ): Promise<void> {
   const { error } = await supabase
     .from('bills')
-    .update(data)
+    .update({ ...data, outstanding_amount: 0 })
     .eq('bill_no', billNo);
   if (error) console.warn('Supabase bill update warning:', billNo, error.message);
 }
