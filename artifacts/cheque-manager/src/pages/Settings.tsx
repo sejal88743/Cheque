@@ -60,6 +60,8 @@ export default function Settings() {
   const [importProgress, setImportProgress] = useState(0);
   const [importTotal, setImportTotal] = useState(0);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [previewOutstanding, setPreviewOutstanding] = useState<Map<string, number>>(new Map());
+  const [outstandingLoading, setOutstandingLoading] = useState(false);
   const entryFileRef = useRef<HTMLInputElement>(null);
 
   const form = useForm<z.infer<typeof settingsSchema>>({
@@ -157,7 +159,15 @@ export default function Settings() {
       }
       setImportPreview(preview);
       setImportResult(null);
+      setPreviewOutstanding(new Map());
       setImportDialogOpen(true);
+      // Load outstanding amounts from Supabase in background
+      const allBillNos = [...new Set(preview.entries.flatMap(e => e.billNos))];
+      setOutstandingLoading(true);
+      batchLookupOutstandingAmounts(allBillNos)
+        .then(map => setPreviewOutstanding(map))
+        .catch(() => {})
+        .finally(() => setOutstandingLoading(false));
     } catch (err) {
       toast({ variant: "destructive", title: "File parse failed", description: String(err) });
     } finally {
@@ -449,40 +459,110 @@ export default function Settings() {
 
           {!importResult && !importing && importPreview && (
             <div className="space-y-4">
-              <div className="border rounded-md overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="text-left p-2 font-semibold">Sheet</th>
-                      <th className="text-left p-2 font-semibold">Cheque Date</th>
-                      <th className="text-right p-2 font-semibold">Entries</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {importPreview.sheetSummary.map((s, i) => (
-                      <tr key={i} className="hover:bg-slate-50">
-                        <td className="p-2 font-mono text-xs">{s.name}</td>
-                        <td className="p-2 flex items-center gap-1">
-                          <CalendarDays className="h-3 w-3 text-muted-foreground" />
-                          {s.date || <span className="text-destructive text-xs">Date detect nahi hui</span>}
-                        </td>
-                        <td className="p-2 text-right">
-                          <Badge variant="secondary">{s.count}</Badge>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              {/* Summary chips */}
+              <div className="flex flex-wrap gap-2 text-xs">
+                <span className="bg-blue-50 border border-blue-200 rounded px-2 py-1 text-blue-800 font-medium">
+                  📄 {importPreview.sheetSummary.map(s => s.name).join(", ")}
+                </span>
+                <span className="bg-slate-50 border rounded px-2 py-1 text-slate-700">
+                  {totalImportEntries} entries · {[...new Set(importPreview.entries.flatMap(e => e.billNos))].length} bills
+                </span>
+                {outstandingLoading && (
+                  <span className="flex items-center gap-1 text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Outstanding load ho raha hai...
+                  </span>
+                )}
               </div>
 
+              {/* Detailed entries table */}
+              <div className="border rounded-md overflow-hidden">
+                <div className="overflow-x-auto max-h-[50vh] overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-100 sticky top-0 z-10">
+                      <tr>
+                        <th className="text-right px-2 py-2 font-semibold text-slate-600 w-8">#</th>
+                        <th className="text-left px-2 py-2 font-semibold text-slate-600">Bill No</th>
+                        <th className="text-left px-2 py-2 font-semibold text-slate-600">Party Name</th>
+                        <th className="text-left px-2 py-2 font-semibold text-slate-600">Bank</th>
+                        <th className="text-left px-2 py-2 font-semibold text-slate-600">Cheq Date</th>
+                        <th className="text-right px-2 py-2 font-semibold text-red-700">Outstanding</th>
+                        <th className="text-right px-2 py-2 font-semibold text-blue-700">Cheq Amt</th>
+                        <th className="text-right px-2 py-2 font-semibold text-green-700">Paid</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {importPreview.entries.map((entry, ei) => {
+                        const splits = splitAmounts(entry.billNos, entry.chequeAmount, previewOutstanding);
+                        return splits.map((split, bi) => {
+                          const outstanding = previewOutstanding.get(split.billNo);
+                          const isFirstBill = bi === 0;
+                          const isMulti = splits.length > 1;
+                          return (
+                            <tr key={`${ei}-${bi}`} className={`hover:bg-slate-50 ${isMulti && !isFirstBill ? "bg-amber-50/40" : ""}`}>
+                              <td className="px-2 py-1.5 text-right text-slate-400 font-mono">
+                                {isFirstBill ? ei + 1 : ""}
+                              </td>
+                              <td className="px-2 py-1.5 font-mono font-semibold text-slate-800">
+                                {split.billNo}
+                                {isMulti && <span className="ml-1 text-[10px] text-amber-600 font-normal">(multi)</span>}
+                              </td>
+                              <td className="px-2 py-1.5 text-slate-700 max-w-[140px] truncate" title={entry.partyName}>
+                                {isFirstBill ? entry.partyName : ""}
+                              </td>
+                              <td className="px-2 py-1.5 text-slate-600 max-w-[100px] truncate" title={entry.bankName}>
+                                {isFirstBill ? entry.bankName : ""}
+                              </td>
+                              <td className="px-2 py-1.5 text-slate-600 whitespace-nowrap">
+                                {isFirstBill ? entry.chequeDate : ""}
+                              </td>
+                              <td className="px-2 py-1.5 text-right font-mono">
+                                {outstandingLoading ? (
+                                  <span className="text-muted-foreground">...</span>
+                                ) : outstanding != null ? (
+                                  <span className={outstanding > 0 ? "text-red-700 font-semibold" : "text-green-600"}>
+                                    {outstanding > 0
+                                      ? `₹${outstanding.toLocaleString("en-IN")}`
+                                      : "Paid"}
+                                  </span>
+                                ) : (
+                                  <span className="text-muted-foreground">—</span>
+                                )}
+                              </td>
+                              <td className="px-2 py-1.5 text-right font-mono text-blue-700">
+                                {isFirstBill ? `₹${entry.chequeAmount.toLocaleString("en-IN")}` : ""}
+                              </td>
+                              <td className="px-2 py-1.5 text-right font-mono text-green-700 font-semibold">
+                                ₹{split.amount.toLocaleString("en-IN")}
+                              </td>
+                            </tr>
+                          );
+                        });
+                      })}
+                    </tbody>
+                    <tfoot className="bg-slate-50 border-t-2 border-slate-300">
+                      <tr>
+                        <td colSpan={6} className="px-2 py-2 text-right text-xs font-semibold text-slate-600">Total</td>
+                        <td className="px-2 py-2 text-right font-mono font-bold text-blue-700">
+                          ₹{importPreview.entries.reduce((s, e) => s + e.chequeAmount, 0).toLocaleString("en-IN")}
+                        </td>
+                        <td className="px-2 py-2 text-right font-mono font-bold text-green-700">
+                          ₹{importPreview.entries.reduce((s, e) => s + e.chequeAmount, 0).toLocaleString("en-IN")}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+
+              {/* Banks status */}
               {importPreview.banksFound.length > 0 && (
                 <div>
-                  <p className="text-sm font-medium mb-2">Banks found in file ({importPreview.banksFound.length}):</p>
-                  <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                  <p className="text-xs font-medium mb-1.5 text-slate-600">Banks in file ({importPreview.banksFound.length}):</p>
+                  <div className="flex flex-wrap gap-1">
                     {importPreview.banksFound.map((b, i) => {
                       const exists = (banks ?? []).some((bank: { name: string }) => bank.name.toUpperCase() === b);
                       return (
-                        <Badge key={i} variant={exists ? "outline" : "default"} className={exists ? "" : "bg-orange-100 text-orange-700 border-orange-300"}>
+                        <Badge key={i} variant={exists ? "outline" : "default"} className={exists ? "text-xs" : "text-xs bg-orange-100 text-orange-700 border-orange-300"}>
                           {exists ? <CheckCircle2 className="h-3 w-3 mr-1" /> : <AlertCircle className="h-3 w-3 mr-1" />}
                           {b}
                         </Badge>
@@ -490,7 +570,7 @@ export default function Settings() {
                     })}
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Orange = new bank (auto-create hoga) · Green = already exists
+                    🟠 Orange = nayi bank (auto-create hogi) · ✅ Green = already hai
                   </p>
                 </div>
               )}
