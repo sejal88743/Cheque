@@ -66,6 +66,23 @@ export async function lookupBillFromSupabase(input: string): Promise<SupaBill | 
   return rows?.[0] ?? null;
 }
 
+async function resolveBillNo(billNo: string): Promise<string> {
+  // Try exact match first
+  const { data: exact } = await supabase
+    .from('bills')
+    .select('bill_no')
+    .eq('bill_no', billNo)
+    .limit(1);
+  if (exact && exact.length > 0) return billNo;
+  // Fallback: suffix ilike match (e.g. "7909" matches "GST7909")
+  const { data: suffix } = await supabase
+    .from('bills')
+    .select('bill_no')
+    .ilike('bill_no', `%${billNo}`)
+    .limit(1);
+  return suffix?.[0]?.bill_no ?? billNo;
+}
+
 export async function updateBillInSupabase(
   billNo: string,
   updates: {
@@ -78,23 +95,55 @@ export async function updateBillInSupabase(
     payment_date?: string | null;
   }
 ): Promise<void> {
+  const resolvedBillNo = await resolveBillNo(billNo);
   const { error } = await supabase
     .from('bills')
     .update(updates)
-    .eq('bill_no', billNo);
+    .eq('bill_no', resolvedBillNo);
   if (error) throw error;
 }
 
 export async function batchLookupOutstandingAmounts(billNos: string[]): Promise<Map<string, number>> {
   if (billNos.length === 0) return new Map();
-  const { data } = await supabase
+
+  const map = new Map<string, number>();
+
+  // Step 1: Exact match
+  const { data: exactData } = await supabase
     .from('bills')
     .select('bill_no, outstanding_amount')
     .in('bill_no', billNos);
-  const map = new Map<string, number>();
-  for (const row of data ?? []) {
-    if (row.bill_no != null) map.set(String(row.bill_no), row.outstanding_amount ?? 0);
+
+  const foundExact = new Set<string>();
+  for (const row of exactData ?? []) {
+    if (row.bill_no != null) {
+      map.set(String(row.bill_no), row.outstanding_amount ?? 0);
+      foundExact.add(String(row.bill_no));
+    }
   }
+
+  // Step 2: Suffix ilike match for bills not found by exact match
+  // Handles cases like XLS has "7909" but Supabase has "GST7909"
+  const unfound = billNos.filter(b => !foundExact.has(b));
+  if (unfound.length > 0) {
+    const orFilter = unfound.map(b => `bill_no.ilike.%${b}`).join(',');
+    const { data: suffixData } = await supabase
+      .from('bills')
+      .select('bill_no, outstanding_amount')
+      .or(orFilter);
+
+    for (const row of suffixData ?? []) {
+      if (row.bill_no != null) {
+        const origBillNo = unfound.find(b =>
+          String(row.bill_no).endsWith(b) || String(row.bill_no) === b
+        );
+        if (origBillNo && !map.has(origBillNo)) {
+          map.set(origBillNo, row.outstanding_amount ?? 0);
+        }
+      }
+    }
+  }
+
   return map;
 }
 
@@ -121,9 +170,10 @@ export async function updateBillFromImport(
     payment_date: string;
   }
 ): Promise<void> {
+  const resolvedBillNo = await resolveBillNo(billNo);
   const { error } = await supabase
     .from('bills')
     .update({ ...data, outstanding_amount: 0 })
-    .eq('bill_no', billNo);
+    .eq('bill_no', resolvedBillNo);
   if (error) console.warn('Supabase bill update warning:', billNo, error.message);
 }
