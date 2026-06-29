@@ -53,6 +53,9 @@ export default function Home() {
   const [lookupLoading, setLookupLoading] = useState(false);
   const [billSource, setBillSource] = useState<"supabase" | "localdb" | null>(null);
   const [billNetAmt, setBillNetAmt] = useState<number | null>(null);
+  const [outstandingAmt, setOutstandingAmt] = useState<number | null>(null);
+  const [collectedAmt, setCollectedAmt] = useState<number | null>(null);
+  const [billStatus, setBillStatus] = useState<"paid" | "unpaid" | "partial" | "credit" | null>(null);
   const [supaBillNo, setSupaBillNo] = useState<string | null>(null);
 
   const [duplicateWarning, setDuplicateWarning] = useState<{ open: boolean; saveData: any }>({ open: false, saveData: null });
@@ -95,6 +98,9 @@ export default function Home() {
     setBankName("");
     setBillSource(null);
     setBillNetAmt(null);
+    setOutstandingAmt(null);
+    setCollectedAmt(null);
+    setBillStatus(null);
     setSupaBillNo(null);
     setMultiBills([]);
     setChequeTotal(0);
@@ -164,6 +170,18 @@ export default function Home() {
       if (data.bill_net_amt != null) setBillNetAmt(Number(data.bill_net_amt));
 
       const outstanding = Number(data.outstanding_amount ?? data.bill_net_amt ?? 0);
+      const collected = Number(data.collected_amount ?? 0);
+      setOutstandingAmt(outstanding);
+      setCollectedAmt(collected);
+
+      // Determine bill status
+      const isCredit = String(data.payment_mode ?? "").toUpperCase() === "CREDIT" || !!data.cancel_line;
+      if (isCredit) setBillStatus("credit");
+      else if (outstanding === 0 && collected > 0) setBillStatus("paid");
+      else if (outstanding === 0 && collected === 0) setBillStatus("paid");
+      else if (outstanding > 0 && collected > 0) setBillStatus("partial");
+      else setBillStatus("unpaid");
+
       const chqAmt = Number(data.cheque_amount ?? 0);
       const displayAmt = chqAmt || outstanding;
       if (displayAmt) setChequeAmount(String(displayAmt));
@@ -429,6 +447,50 @@ export default function Home() {
               </Button>
             </div>
             <p className="text-xs text-muted-foreground mt-1">Bill no type karo → "Dhundho" dabao ya Enter press karo</p>
+
+            {/* Bill info card — shows after lookup */}
+            {billSource === "supabase" && billStatus && (
+              <div className="mt-2 rounded-lg border px-3 py-2 flex flex-wrap gap-x-4 gap-y-1 text-xs bg-white">
+                {/* Status badge */}
+                <span className={`inline-flex items-center gap-1 font-bold rounded-full px-2 py-0.5 text-white text-[11px]
+                  ${billStatus === "paid" ? "bg-green-600" : ""}
+                  ${billStatus === "unpaid" ? "bg-red-600" : ""}
+                  ${billStatus === "partial" ? "bg-orange-500" : ""}
+                  ${billStatus === "credit" ? "bg-purple-600" : ""}
+                `}>
+                  {billStatus === "paid" && "✓ Paid"}
+                  {billStatus === "unpaid" && "✗ Unpaid"}
+                  {billStatus === "partial" && "~ Partial"}
+                  {billStatus === "credit" && "↩ Credit"}
+                </span>
+
+                {/* Outstanding amount */}
+                {outstandingAmt != null && (
+                  <span className="text-muted-foreground">
+                    Outstanding:{" "}
+                    <strong className={outstandingAmt > 0 ? "text-red-700" : "text-green-700"}>
+                      {fmtINR(outstandingAmt)}
+                    </strong>
+                  </span>
+                )}
+
+                {/* Collected amount */}
+                {collectedAmt != null && collectedAmt > 0 && (
+                  <span className="text-muted-foreground">
+                    Collected:{" "}
+                    <strong className="text-green-700">{fmtINR(collectedAmt)}</strong>
+                  </span>
+                )}
+
+                {/* Bill net amount */}
+                {billNetAmt != null && (
+                  <span className="text-muted-foreground">
+                    Bill Amt:{" "}
+                    <strong>{fmtINR(billNetAmt)}</strong>
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           {multiBills.length > 0 && (
@@ -463,14 +525,7 @@ export default function Home() {
           )}
 
           <div>
-            <Label className="font-semibold text-xs mb-1 flex justify-between">
-              <span>Party Name</span>
-              {billNetAmt != null && (
-                <span className="font-normal text-green-700">
-                  Bill Amt: <strong>{new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(billNetAmt)}</strong>
-                </span>
-              )}
-            </Label>
+            <Label className="font-semibold text-xs mb-1 block">Party Name</Label>
             <Input
               ref={partyRef}
               type="text"
