@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { format } from "date-fns";
-import { batchLookupBillData, updateBillFromImport } from "@/lib/supabase";
+import { batchLookupBillData, updateBillFromImport, updateBillInSupabase } from "@/lib/supabase";
 import { useGetSettings, useUpdateSettings, useListBanks, useCreateBank, useDeleteBank, getListBanksQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -92,6 +92,8 @@ export default function Settings() {
   const [previewBillNetAmts, setPreviewBillNetAmts] = useState<Map<string, number | null>>(new Map());
   const [outstandingLoading, setOutstandingLoading] = useState(false);
   const [selectedEntries, setSelectedEntries] = useState<Set<number>>(new Set());
+  const [rowBankSelections, setRowBankSelections] = useState<Record<number, string>>({});
+  const [rowSaveStatus, setRowSaveStatus] = useState<Record<number, 'idle' | 'saving' | 'saved' | 'duplicate' | 'error'>>({});
   const entryFileRef = useRef<HTMLInputElement>(null);
 
   const updateEntry = (idx: number, field: keyof ParsedImportEntry, value: string | number) => {
@@ -203,6 +205,15 @@ export default function Settings() {
       setPreviewBillNetAmts(new Map());
       // Default: all entries selected
       setSelectedEntries(new Set(preview.entries.map((_, i) => i)));
+      // Init bank selections: fuzzy-match XLS bank name against existing bank list
+      const bankList = ((banks ?? []) as Array<{ name: string }>).map(b => b.name);
+      const initSelections: Record<number, string> = {};
+      preview.entries.forEach((entry, i) => {
+        const match = bankList.find(b => isSameBankName(b, entry.bankName));
+        initSelections[i] = match ?? bankList[0] ?? entry.bankName;
+      });
+      setRowBankSelections(initSelections);
+      setRowSaveStatus({});
       setImportDialogOpen(true);
       // Load bill data (outstanding + net amount) from Supabase in background
       const allBillNos = [...new Set(preview.entries.flatMap(e => e.billNos))];
@@ -282,68 +293,69 @@ export default function Settings() {
     }
   };
 
+  const saveEntryRow = async (ei: number): Promise<'saved' | 'duplicate' | 'error'> => {
+    const entry = editableEntries[ei];
+    const selectedBank = rowBankSelections[ei] ?? entry.bankName;
+    setRowSaveStatus(prev => ({ ...prev, [ei]: 'saving' }));
+
+    const existingBankNames = new Set<string>((banks ?? []).map((b: { name: string }) => b.name.toUpperCase()));
+    await ensureBankExists(selectedBank.toUpperCase(), existingBankNames);
+
+    const computedSplits = splitAmounts(entry.billNos, entry.chequeAmount, previewOutstanding);
+    const splits = computedSplits.map(s => ({
+      billNo: s.billNo,
+      amount: getSplitAmt(ei, s.billNo, s.amount),
+    }));
+    const totalOut = entry.billNos.reduce((s, b) => s + (previewOutstanding.get(b) ?? 0), 0);
+    const discrepancyAmt = Math.round((entry.chequeAmount - totalOut) * 100) / 100;
+
+    let savedCount = 0, dupCount = 0, errCount = 0;
+    const entryWithBank: ParsedImportEntry = { ...entry, bankName: selectedBank };
+
+    for (const split of splits) {
+      const status = await saveSingleBillEntry(entryWithBank, split.billNo, split.amount, discrepancyAmt);
+      if (status === 'saved') savedCount++;
+      else if (status === 'duplicate') dupCount++;
+      else errCount++;
+
+      // Supabase: only update PAID bills (outstanding = 0) with cheque_date + selected bank_name
+      const outstanding = previewOutstanding.get(split.billNo) ?? -1;
+      if (outstanding === 0 && selectedEntries.has(ei)) {
+        try {
+          await updateBillInSupabase(split.billNo, {
+            cheque_date: entry.chequeDate,
+            bank_name: selectedBank.toUpperCase(),
+          });
+        } catch { /* non-fatal */ }
+      }
+    }
+
+    refetchBanks();
+    queryClient.invalidateQueries({ queryKey: ['/api/cheque-entries'] });
+    const finalStatus: 'saved' | 'duplicate' | 'error' =
+      errCount > 0 ? 'error' : dupCount > 0 && savedCount === 0 ? 'duplicate' : 'saved';
+    setRowSaveStatus(prev => ({ ...prev, [ei]: finalStatus }));
+    return finalStatus;
+  };
+
   const handleImportConfirm = async () => {
     if (!editableEntries.length) return;
     setImporting(true);
     setImportProgress(0);
     setImportResult(null);
-
+    const toSave = [...selectedEntries];
+    setImportTotal(toSave.length);
     const result: ImportResult = { saved: 0, duplicates: 0, errors: 0, banksCreated: 0 };
-    const existingBankNames = new Set<string>((banks ?? []).map((b: { name: string }) => b.name.toUpperCase()));
-    const entries = editableEntries;
-    const total = entries.length;
-    setImportTotal(total);
-
-    // Use already-loaded outstanding map from preview (skip re-fetch)
-    const outstandingMap = previewOutstanding;
-
-    for (let i = 0; i < total; i++) {
-      const entry = entries[i];
-
-      const created = await ensureBankExists(entry.bankName.toUpperCase(), existingBankNames);
-      if (created) result.banksCreated++;
-
-      const computedSplits = splitAmounts(entry.billNos, entry.chequeAmount, outstandingMap);
-      // Apply per-bill overrides from inline editing
-      const splits = computedSplits.map(s => ({
-        billNo: s.billNo,
-        amount: getSplitAmt(i, s.billNo, s.amount),
-      }));
-
-      const totalOut = entry.billNos.reduce((s, b) => s + (outstandingMap.get(b) ?? 0), 0);
-      const discrepancyAmt = Math.round((entry.chequeAmount - totalOut) * 100) / 100;
-
-      for (const split of splits) {
-        const status = await saveSingleBillEntry(entry, split.billNo, split.amount, discrepancyAmt);
-        if (status === 'saved') result.saved++;
-        else if (status === 'duplicate') result.duplicates++;
-        else result.errors++;
-
-        // Only update Supabase for selected entries
-        if (selectedEntries.has(i)) {
-          try {
-            await updateBillFromImport(split.billNo, {
-              cheque_date: entry.chequeDate,
-              bank_name: entry.bankName.toUpperCase(),
-              cheque_no: entry.chequeNo,
-              payment_date: format(new Date(entry.entryDate), 'dd/MM/yyyy'),
-            });
-          } catch { /* non-fatal */ }
-        }
-      }
-
-      setImportProgress(i + 1);
+    for (let p = 0; p < toSave.length; p++) {
+      const status = await saveEntryRow(toSave[p]);
+      if (status === 'saved') result.saved++;
+      else if (status === 'duplicate') result.duplicates++;
+      else result.errors++;
+      setImportProgress(p + 1);
     }
-
     setImporting(false);
     setImportResult(result);
-    refetchBanks();
-    queryClient.invalidateQueries({ queryKey: ['/api/cheque-entries'] });
-
-    toast({
-      title: `Import Complete`,
-      description: `${result.saved} saved, ${result.duplicates} duplicate, ${result.errors} error`,
-    });
+    toast({ title: `Import Complete`, description: `${result.saved} saved, ${result.duplicates} duplicate, ${result.errors} error` });
   };
 
   const totalImportEntries = importPreview?.entries.length ?? 0;
@@ -542,13 +554,15 @@ export default function Settings() {
                           />
                         </th>
                         <th className="text-left px-2 py-1.5 font-semibold text-slate-700 border-b">Bill No</th>
-                        <th className="text-left px-1 py-1.5 font-semibold text-blue-700 border-b">✏ Bank Name</th>
+                        <th className="text-left px-1 py-1.5 font-semibold text-slate-500 border-b">File Bank</th>
+                        <th className="text-left px-1 py-1.5 font-semibold text-blue-700 border-b">✏ Select Bank</th>
                         <th className="text-left px-1 py-1.5 font-semibold text-blue-700 border-b">✏ Cheq No</th>
                         <th className="text-left px-1 py-1.5 font-semibold text-blue-700 border-b">✏ Cheq Date</th>
                         <th className="text-right px-1 py-1.5 font-semibold text-blue-700 border-b">✏ Chq Amt</th>
                         <th className="text-right px-2 py-1.5 font-semibold text-slate-600 border-b">Net Amt</th>
                         <th className="text-right px-2 py-1.5 font-semibold text-red-700 border-b">Outstanding</th>
                         <th className="text-right px-1 py-1.5 font-semibold text-green-700 border-b">✏ Paid</th>
+                        <th className="px-1 py-1.5 border-b w-12"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -577,22 +591,36 @@ export default function Settings() {
                                   />
                                 )}
                               </td>
-                              {/* Bill No */}
-                              <td className="px-2 py-1 font-mono font-bold text-slate-800 align-middle whitespace-nowrap">
-                                {split.billNo}
+                              {/* Bill No — red if unpaid (outstanding > 0), green if paid */}
+                              <td className="px-2 py-1 font-mono font-bold align-middle whitespace-nowrap">
+                                <span className={
+                                  outstanding == null ? "text-slate-400" :
+                                  outstanding > 0 ? "text-red-600" : "text-green-700"
+                                }>
+                                  {split.billNo}
+                                </span>
                                 {isMulti && <span className="ml-1 text-[10px] text-amber-600 font-normal">(m)</span>}
                               </td>
-                              {/* Bank Name — editable on first, read-only on subsequent */}
+                              {/* XLS Bank Name — read-only reference */}
+                              <td className="px-2 py-1 align-middle whitespace-nowrap">
+                                <span className="text-xs text-slate-500">{entry.bankName}</span>
+                              </td>
+                              {/* Select Bank — dropdown from Supabase/local bank list, first bill only editable */}
                               <td className="px-1 py-1 align-middle">
                                 {isFirstBill ? (
-                                  <input
-                                    type="text"
-                                    value={entry.bankName}
-                                    onChange={e => updateEntry(ei, "bankName", e.target.value.toUpperCase())}
-                                    className="w-full min-w-[90px] bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5 text-xs font-medium text-blue-900 focus:outline-none focus:border-blue-500 focus:bg-white"
-                                  />
+                                  <select
+                                    value={rowBankSelections[ei] ?? ""}
+                                    onChange={e => setRowBankSelections(prev => ({ ...prev, [ei]: e.target.value }))}
+                                    className="w-full min-w-[100px] bg-blue-50 border border-blue-200 rounded px-1 py-0.5 text-xs text-blue-900 focus:outline-none focus:border-blue-500"
+                                  >
+                                    {(banks ?? []).map((b: { name: string; id: number }) => (
+                                      <option key={b.id} value={b.name}>{b.name}</option>
+                                    ))}
+                                  </select>
                                 ) : (
-                                  <span className="text-xs text-blue-800 font-medium px-1.5">{entry.bankName}</span>
+                                  <span className="text-xs text-blue-800 font-medium px-1.5">
+                                    {rowBankSelections[ei] ?? entry.bankName}
+                                  </span>
                                 )}
                               </td>
                               {/* Cheque No — editable on first, read-only on subsequent */}
@@ -667,6 +695,25 @@ export default function Settings() {
                                   className="w-full min-w-[70px] bg-green-50 border border-green-200 rounded px-1.5 py-0.5 text-xs font-mono text-right text-green-900 font-semibold focus:outline-none focus:border-green-500 focus:bg-white"
                                 />
                               </td>
+                              {/* Save button — only on first bill row */}
+                              <td className="px-1 py-1 align-middle text-center">
+                                {isFirstBill && (() => {
+                                  const st = rowSaveStatus[ei];
+                                  if (st === 'saving') return <Loader2 className="h-3 w-3 animate-spin text-blue-600 mx-auto" />;
+                                  if (st === 'saved') return <CheckCircle2 className="h-3 w-3 text-green-600 mx-auto" />;
+                                  if (st === 'duplicate') return <span className="text-[10px] text-yellow-700 font-bold">DUP</span>;
+                                  if (st === 'error') return <span className="text-[10px] text-red-700 font-bold">ERR</span>;
+                                  return (
+                                    <Button
+                                      size="sm"
+                                      onClick={() => saveEntryRow(ei)}
+                                      className="h-6 px-2 text-[11px] bg-green-600 hover:bg-green-700"
+                                    >
+                                      Save
+                                    </Button>
+                                  );
+                                })()}
+                              </td>
                             </tr>
                           );
                         });
@@ -674,7 +721,7 @@ export default function Settings() {
                     </tbody>
                     <tfoot className="bg-slate-100 border-t-2 border-slate-300 sticky bottom-0">
                       <tr>
-                        <td colSpan={5} className="px-2 py-1.5 text-right text-xs font-bold text-slate-600">Total</td>
+                        <td colSpan={6} className="px-2 py-1.5 text-right text-xs font-bold text-slate-600">Total</td>
                         <td className="px-2 py-1.5 text-right font-mono font-bold text-blue-700">
                           ₹{editableEntries.reduce((s, e) => s + e.chequeAmount, 0).toLocaleString("en-IN")}
                         </td>
@@ -688,6 +735,7 @@ export default function Settings() {
                             return s + sp.reduce((ss, spl) => ss + getSplitAmt(ei, spl.billNo, spl.amount), 0);
                           }, 0).toLocaleString("en-IN")}
                         </td>
+                        <td></td>
                       </tr>
                     </tfoot>
                   </table>
