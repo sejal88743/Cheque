@@ -506,41 +506,39 @@ export default function Settings() {
       </Dialog>
 
       <Dialog open={importDialogOpen} onOpenChange={open => { if (!importing) setImportDialogOpen(open); }}>
-        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+        <DialogContent className="w-screen h-screen max-w-none max-h-none rounded-none flex flex-col overflow-hidden p-0">
+          {/* Fixed header */}
+          <div className="flex-shrink-0 px-4 pt-4 pb-2 border-b bg-white">
+            <div className="flex items-center gap-2">
               <FileSpreadsheet className="h-5 w-5 text-blue-600" />
-              Import Preview — {totalImportEntries} Entries
-            </DialogTitle>
-            <DialogDescription>
-              Niche sheets ka breakdown dekho, phir Import karo.
-            </DialogDescription>
-          </DialogHeader>
-
-          {!importResult && !importing && importPreview && editableEntries.length > 0 && (
-            <div className="space-y-3">
-              {/* Summary chips */}
-              <div className="flex flex-wrap gap-2 text-xs items-center">
-                <span className="bg-blue-50 border border-blue-200 rounded px-2 py-1 text-blue-800 font-medium">
+              <h2 className="text-base font-semibold">Import Preview — {totalImportEntries} Entries</h2>
+            </div>
+            {!importResult && !importing && importPreview && (
+              <div className="flex flex-wrap gap-2 text-xs items-center mt-2">
+                <span className="bg-blue-50 border border-blue-200 rounded px-2 py-0.5 text-blue-800 font-medium">
                   📄 {importPreview.sheetSummary.map(s => s.name).join(", ")}
                 </span>
-                <span className="bg-slate-50 border rounded px-2 py-1 text-slate-700">
+                <span className="bg-slate-50 border rounded px-2 py-0.5 text-slate-700">
                   {totalImportEntries} entries · {[...new Set(editableEntries.flatMap(e => e.billNos))].length} bills
                 </span>
-                <span className="bg-green-50 border border-green-200 rounded px-2 py-1 text-green-800 font-medium">
-                  ✅ {selectedEntries.size} selected (Supabase update hoga)
+                <span className="bg-green-50 border border-green-200 rounded px-2 py-0.5 text-green-800 font-medium">
+                  ✅ {selectedEntries.size} selected
                 </span>
                 {outstandingLoading && (
                   <span className="flex items-center gap-1 text-muted-foreground">
-                    <Loader2 className="h-3 w-3 animate-spin" /> Outstanding load ho raha hai...
+                    <Loader2 className="h-3 w-3 animate-spin" /> Loading...
                   </span>
                 )}
-                <span className="text-muted-foreground italic">✏️ Cells edit ho sakte hain — click karke change karo</span>
+                <span className="text-muted-foreground italic">✏️ Cells edit karo</span>
               </div>
+            )}
+          </div>
 
-              {/* Editable entries table — compact */}
-              <div className="border rounded-md overflow-hidden">
-                <div className="overflow-x-auto max-h-[55vh] overflow-y-auto">
+          {!importResult && !importing && importPreview && editableEntries.length > 0 && (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              {/* Editable entries table — full height */}
+              <div className="flex-1 overflow-auto">
+                <div className="overflow-x-auto h-full">
                   <table className="w-full text-xs border-collapse">
                     <thead className="bg-slate-100 sticky top-0 z-10">
                       <tr>
@@ -741,81 +739,82 @@ export default function Settings() {
                   </table>
                 </div>
               </div>
-
-              {/* Banks status */}
-              {importPreview.banksFound.length > 0 && (
-                <div>
-                  <p className="text-xs font-medium mb-1.5 text-slate-600">Banks in file ({importPreview.banksFound.length}):</p>
-                  <div className="flex flex-wrap gap-1">
-                    {importPreview.banksFound.map((b, i) => {
-                      const exists = (banks ?? []).some((bank: { name: string }) => bank.name.toUpperCase() === b);
-                      return (
-                        <Badge key={i} variant={exists ? "outline" : "default"} className={exists ? "text-xs" : "text-xs bg-orange-100 text-orange-700 border-orange-300"}>
-                          {exists ? <CheckCircle2 className="h-3 w-3 mr-1" /> : <AlertCircle className="h-3 w-3 mr-1" />}
-                          {b}
-                        </Badge>
-                      );
-                    })}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    🟠 Orange = nayi bank (auto-create hogi) · ✅ Green = already hai
-                  </p>
-                </div>
-              )}
             </div>
           )}
 
           {importing && (
-            <div className="space-y-3 py-4">
-              <div className="flex justify-between text-sm font-medium">
-                <span>Importing...</span>
-                <span>{importProgress} / {importTotal}</span>
+            <div className="flex-1 flex flex-col items-center justify-center space-y-3 px-8">
+              <div className="w-full max-w-md">
+                <div className="flex justify-between text-sm font-medium mb-2">
+                  <span>Importing...</span>
+                  <span>{importProgress} / {importTotal}</span>
+                </div>
+                <Progress value={progressPct} className="h-3" />
+                <p className="text-xs text-muted-foreground text-center mt-2">Kripya wait karo, app band mat karo.</p>
               </div>
-              <Progress value={progressPct} className="h-3" />
-              <p className="text-xs text-muted-foreground text-center">Kripya wait karo, app band mat karo.</p>
             </div>
           )}
 
           {importResult && (
-            <div className="space-y-3 py-2">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
-                  <p className="text-2xl font-bold text-green-700">{importResult.saved}</p>
-                  <p className="text-xs text-green-600">Saved</p>
+            <div className="flex-1 flex flex-col items-center justify-center space-y-3 px-8">
+              <div className="w-full max-w-lg">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center">
+                    <p className="text-3xl font-bold text-green-700">{importResult.saved}</p>
+                    <p className="text-xs text-green-600">Saved</p>
+                  </div>
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-center">
+                    <p className="text-3xl font-bold text-yellow-700">{importResult.duplicates}</p>
+                    <p className="text-xs text-yellow-600">Duplicates Skipped</p>
+                  </div>
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
+                    <p className="text-3xl font-bold text-red-700">{importResult.errors}</p>
+                    <p className="text-xs text-red-600">Errors</p>
+                  </div>
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
+                    <p className="text-3xl font-bold text-blue-700">{importResult.banksCreated}</p>
+                    <p className="text-xs text-blue-600">Banks Created</p>
+                  </div>
                 </div>
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-center">
-                  <p className="text-2xl font-bold text-yellow-700">{importResult.duplicates}</p>
-                  <p className="text-xs text-yellow-600">Duplicates Skipped</p>
-                </div>
-                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-center">
-                  <p className="text-2xl font-bold text-red-700">{importResult.errors}</p>
-                  <p className="text-xs text-red-600">Errors</p>
-                </div>
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
-                  <p className="text-2xl font-bold text-blue-700">{importResult.banksCreated}</p>
-                  <p className="text-xs text-blue-600">Banks Created</p>
-                </div>
+                <p className="text-sm text-center text-muted-foreground mt-4">
+                  Import complete! Reports page par naye entries dekh sakte ho.
+                </p>
               </div>
-              <p className="text-sm text-center text-muted-foreground">
-                Import complete! Reports page par naye entries dekh sakte ho.
-              </p>
             </div>
           )}
 
-          <DialogFooter>
-            {!importing && !importResult && (
-              <>
-                <Button variant="outline" onClick={() => setImportDialogOpen(false)}>Cancel</Button>
-                <Button onClick={handleImportConfirm} className="bg-blue-600 hover:bg-blue-700">
-                  <Upload className="h-4 w-4 mr-2" />
-                  Import Karo ({totalImportEntries} entries)
-                </Button>
-              </>
+          {/* Fixed footer */}
+          <div className="flex-shrink-0 border-t bg-white px-4 py-2 flex items-center justify-between gap-3">
+            {/* Banks status — compact strip */}
+            {!importResult && !importing && importPreview && importPreview.banksFound.length > 0 && (
+              <div className="flex flex-wrap gap-1 items-center overflow-hidden">
+                <span className="text-xs text-slate-500 mr-1 shrink-0">Banks:</span>
+                {importPreview.banksFound.map((b, i) => {
+                  const exists = (banks ?? []).some((bank: { name: string }) => bank.name.toUpperCase() === b);
+                  return (
+                    <Badge key={i} variant={exists ? "outline" : "default"} className={exists ? "text-[10px] py-0" : "text-[10px] py-0 bg-orange-100 text-orange-700 border-orange-300"}>
+                      {exists ? <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" /> : <AlertCircle className="h-2.5 w-2.5 mr-0.5" />}
+                      {b}
+                    </Badge>
+                  );
+                })}
+              </div>
             )}
-            {importResult && (
-              <Button onClick={() => setImportDialogOpen(false)}>Close</Button>
-            )}
-          </DialogFooter>
+            <div className="flex gap-2 ml-auto shrink-0">
+              {!importing && !importResult && (
+                <>
+                  <Button variant="outline" onClick={() => setImportDialogOpen(false)}>Cancel</Button>
+                  <Button onClick={handleImportConfirm} className="bg-blue-600 hover:bg-blue-700">
+                    <Upload className="h-4 w-4 mr-2" />
+                    Import Karo ({selectedEntries.size} selected)
+                  </Button>
+                </>
+              )}
+              {importResult && (
+                <Button onClick={() => setImportDialogOpen(false)}>Close</Button>
+              )}
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
