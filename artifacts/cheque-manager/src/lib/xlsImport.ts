@@ -35,8 +35,8 @@ export function parseBillNos(raw: string | number): string[] {
 
   for (const part of parts) {
     const trimmed = part.trim();
-    // Only pure numeric parts are valid bill numbers
-    if (trimmed && /^\d+$/.test(trimmed)) result.push(trimmed);
+    // Only pure numeric parts are valid bill numbers — pad to 5 digits
+    if (trimmed && /^\d+$/.test(trimmed)) result.push(trimmed.padStart(5, '0'));
   }
 
   return [...new Set(result)];

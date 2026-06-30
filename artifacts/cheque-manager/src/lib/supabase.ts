@@ -88,6 +88,7 @@ export async function updateBillInSupabase(
   updates: {
     cheque_date?: string;
     bank_name?: string;
+    collected_bank_name?: string;
     cheque_no?: string;
     cheque_amount?: number;
     collected_amount?: number;

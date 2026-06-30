@@ -324,7 +324,7 @@ export default function Settings() {
         try {
           await updateBillInSupabase(split.billNo, {
             cheque_date: entry.chequeDate,
-            bank_name: selectedBank.toUpperCase(),
+            collected_bank_name: selectedBank.toUpperCase(),
           });
         } catch { /* non-fatal */ }
       }
