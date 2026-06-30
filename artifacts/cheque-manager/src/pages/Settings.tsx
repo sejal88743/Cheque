@@ -91,6 +91,7 @@ export default function Settings() {
   const [previewOutstanding, setPreviewOutstanding] = useState<Map<string, number>>(new Map());
   const [previewBillNetAmts, setPreviewBillNetAmts] = useState<Map<string, number | null>>(new Map());
   const [outstandingLoading, setOutstandingLoading] = useState(false);
+  const [selectedEntries, setSelectedEntries] = useState<Set<number>>(new Set());
   const entryFileRef = useRef<HTMLInputElement>(null);
 
   const updateEntry = (idx: number, field: keyof ParsedImportEntry, value: string | number) => {
@@ -200,6 +201,8 @@ export default function Settings() {
       setImportResult(null);
       setPreviewOutstanding(new Map());
       setPreviewBillNetAmts(new Map());
+      // Default: all entries selected
+      setSelectedEntries(new Set(preview.entries.map((_, i) => i)));
       setImportDialogOpen(true);
       // Load bill data (outstanding + net amount) from Supabase in background
       const allBillNos = [...new Set(preview.entries.flatMap(e => e.billNos))];
@@ -316,15 +319,17 @@ export default function Settings() {
         else if (status === 'duplicate') result.duplicates++;
         else result.errors++;
 
-        // Always update Supabase — only cheque_date, bank_name, cheque_no (amount manual)
-        try {
-          await updateBillFromImport(split.billNo, {
-            cheque_date: entry.chequeDate,
-            bank_name: entry.bankName.toUpperCase(),
-            cheque_no: entry.chequeNo,
-            payment_date: format(new Date(entry.entryDate), 'dd/MM/yyyy'),
-          });
-        } catch { /* non-fatal */ }
+        // Only update Supabase for selected entries
+        if (selectedEntries.has(i)) {
+          try {
+            await updateBillFromImport(split.billNo, {
+              cheque_date: entry.chequeDate,
+              bank_name: entry.bankName.toUpperCase(),
+              cheque_no: entry.chequeNo,
+              payment_date: format(new Date(entry.entryDate), 'dd/MM/yyyy'),
+            });
+          } catch { /* non-fatal */ }
+        }
       }
 
       setImportProgress(i + 1);
@@ -510,6 +515,9 @@ export default function Settings() {
                 <span className="bg-slate-50 border rounded px-2 py-1 text-slate-700">
                   {totalImportEntries} entries · {[...new Set(editableEntries.flatMap(e => e.billNos))].length} bills
                 </span>
+                <span className="bg-green-50 border border-green-200 rounded px-2 py-1 text-green-800 font-medium">
+                  ✅ {selectedEntries.size} selected (Supabase update hoga)
+                </span>
                 {outstandingLoading && (
                   <span className="flex items-center gap-1 text-muted-foreground">
                     <Loader2 className="h-3 w-3 animate-spin" /> Outstanding load ho raha hai...
@@ -524,6 +532,15 @@ export default function Settings() {
                   <table className="w-full text-xs border-collapse">
                     <thead className="bg-slate-100 sticky top-0 z-10">
                       <tr>
+                        <th className="px-2 py-1.5 border-b w-8">
+                          <input
+                            type="checkbox"
+                            checked={selectedEntries.size === editableEntries.length}
+                            onChange={e => setSelectedEntries(e.target.checked ? new Set(editableEntries.map((_, i) => i)) : new Set())}
+                            className="cursor-pointer"
+                            title="Sab select / deselect"
+                          />
+                        </th>
                         <th className="text-left px-2 py-1.5 font-semibold text-slate-700 border-b">Bill No</th>
                         <th className="text-left px-1 py-1.5 font-semibold text-blue-700 border-b">✏ Bank Name</th>
                         <th className="text-left px-1 py-1.5 font-semibold text-blue-700 border-b">✏ Cheq No</th>
@@ -543,7 +560,22 @@ export default function Settings() {
                           const isMulti = computedSplits.length > 1;
                           const paidAmt = getSplitAmt(ei, split.billNo, split.amount);
                           return (
-                            <tr key={`${ei}-${bi}`} className={`border-b ${isMulti && !isFirstBill ? "bg-amber-50/40" : "hover:bg-slate-50/80"}`}>
+                            <tr key={`${ei}-${bi}`} className={`border-b ${!selectedEntries.has(ei) ? "opacity-40" : ""} ${isMulti && !isFirstBill ? "bg-amber-50/40" : "hover:bg-slate-50/80"}`}>
+                              {/* Checkbox — only on first bill row */}
+                              <td className="px-2 py-1 align-middle text-center">
+                                {isFirstBill && (
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedEntries.has(ei)}
+                                    onChange={() => setSelectedEntries(prev => {
+                                      const next = new Set(prev);
+                                      if (next.has(ei)) next.delete(ei); else next.add(ei);
+                                      return next;
+                                    })}
+                                    className="cursor-pointer"
+                                  />
+                                )}
+                              </td>
                               {/* Bill No */}
                               <td className="px-2 py-1 font-mono font-bold text-slate-800 align-middle whitespace-nowrap">
                                 {split.billNo}
@@ -624,7 +656,7 @@ export default function Settings() {
                     </tbody>
                     <tfoot className="bg-slate-100 border-t-2 border-slate-300 sticky bottom-0">
                       <tr>
-                        <td colSpan={5} className="px-2 py-1.5 text-right text-xs font-bold text-slate-600">Total</td>
+                        <td colSpan={6} className="px-2 py-1.5 text-right text-xs font-bold text-slate-600">Total</td>
                         <td className="px-2 py-1.5 text-right font-mono font-bold text-red-700">
                           ₹{editableEntries.reduce((s, e) => s + (previewOutstanding.get(e.billNos[0]) ?? 0), 0).toLocaleString("en-IN")}
                         </td>
