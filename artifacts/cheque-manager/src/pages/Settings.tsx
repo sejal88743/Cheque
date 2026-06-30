@@ -545,6 +545,7 @@ export default function Settings() {
                         <th className="text-left px-1 py-1.5 font-semibold text-blue-700 border-b">✏ Bank Name</th>
                         <th className="text-left px-1 py-1.5 font-semibold text-blue-700 border-b">✏ Cheq No</th>
                         <th className="text-left px-1 py-1.5 font-semibold text-blue-700 border-b">✏ Cheq Date</th>
+                        <th className="text-right px-1 py-1.5 font-semibold text-blue-700 border-b">✏ Chq Amt</th>
                         <th className="text-right px-2 py-1.5 font-semibold text-slate-600 border-b">Net Amt</th>
                         <th className="text-right px-2 py-1.5 font-semibold text-red-700 border-b">Outstanding</th>
                         <th className="text-right px-1 py-1.5 font-semibold text-green-700 border-b">✏ Paid</th>
@@ -581,7 +582,7 @@ export default function Settings() {
                                 {split.billNo}
                                 {isMulti && <span className="ml-1 text-[10px] text-amber-600 font-normal">(m)</span>}
                               </td>
-                              {/* Bank Name — editable, shared across multi-bill */}
+                              {/* Bank Name — editable on first, read-only on subsequent */}
                               <td className="px-1 py-1 align-middle">
                                 {isFirstBill ? (
                                   <input
@@ -591,10 +592,10 @@ export default function Settings() {
                                     className="w-full min-w-[90px] bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5 text-xs font-medium text-blue-900 focus:outline-none focus:border-blue-500 focus:bg-white"
                                   />
                                 ) : (
-                                  <span className="text-[10px] text-slate-400 italic px-1">↑</span>
+                                  <span className="text-xs text-blue-800 font-medium px-1.5">{entry.bankName}</span>
                                 )}
                               </td>
-                              {/* Cheque No — editable, shared */}
+                              {/* Cheque No — editable on first, read-only on subsequent */}
                               <td className="px-1 py-1 align-middle">
                                 {isFirstBill ? (
                                   <input
@@ -604,11 +605,11 @@ export default function Settings() {
                                     className="w-full min-w-[60px] bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5 text-xs font-mono text-blue-900 focus:outline-none focus:border-blue-500 focus:bg-white"
                                   />
                                 ) : (
-                                  <span className="text-[10px] text-slate-400 italic px-1">↑</span>
+                                  <span className="text-xs font-mono text-blue-800 px-1.5">{entry.chequeNo}</span>
                                 )}
                               </td>
-                              {/* Cheque Date — editable, shared */}
-                              <td className="px-1 py-1 align-middle">
+                              {/* Cheque Date — editable on first, read-only on subsequent */}
+                              <td className="px-1 py-1 align-middle whitespace-nowrap">
                                 {isFirstBill ? (
                                   <input
                                     type="date"
@@ -616,7 +617,24 @@ export default function Settings() {
                                     onChange={e => updateEntry(ei, "chequeDate", e.target.value)}
                                     className="w-full min-w-[110px] bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5 text-xs text-blue-900 focus:outline-none focus:border-blue-500 focus:bg-white"
                                   />
-                                ) : ""}
+                                ) : (
+                                  <span className="text-xs text-blue-800 px-1.5">
+                                    {entry.chequeDate ? new Date(entry.chequeDate).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' }) : ""}
+                                  </span>
+                                )}
+                              </td>
+                              {/* Chq Amt — editable on first, read-only on subsequent */}
+                              <td className="px-1 py-1 align-middle">
+                                {isFirstBill ? (
+                                  <input
+                                    type="number"
+                                    value={entry.chequeAmount}
+                                    onChange={e => updateEntry(ei, "chequeAmount", Number(e.target.value))}
+                                    className="w-full min-w-[70px] bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5 text-xs font-mono text-right text-blue-900 focus:outline-none focus:border-blue-500 focus:bg-white"
+                                  />
+                                ) : (
+                                  <span className="text-xs font-mono text-blue-800 px-1.5 block text-right">{entry.chequeAmount.toLocaleString('en-IN')}</span>
+                                )}
                               </td>
                               {/* Bill Net Amt — from Supabase, read-only */}
                               <td className="px-2 py-1 text-right font-mono align-middle text-slate-600">
@@ -656,9 +674,13 @@ export default function Settings() {
                     </tbody>
                     <tfoot className="bg-slate-100 border-t-2 border-slate-300 sticky bottom-0">
                       <tr>
-                        <td colSpan={6} className="px-2 py-1.5 text-right text-xs font-bold text-slate-600">Total</td>
+                        <td colSpan={5} className="px-2 py-1.5 text-right text-xs font-bold text-slate-600">Total</td>
+                        <td className="px-2 py-1.5 text-right font-mono font-bold text-blue-700">
+                          ₹{editableEntries.reduce((s, e) => s + e.chequeAmount, 0).toLocaleString("en-IN")}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono font-bold text-slate-600"></td>
                         <td className="px-2 py-1.5 text-right font-mono font-bold text-red-700">
-                          ₹{editableEntries.reduce((s, e) => s + (previewOutstanding.get(e.billNos[0]) ?? 0), 0).toLocaleString("en-IN")}
+                          ₹{editableEntries.reduce((s, e) => s + e.billNos.reduce((bs, b) => bs + (previewOutstanding.get(b) ?? 0), 0), 0).toLocaleString("en-IN")}
                         </td>
                         <td className="px-2 py-1.5 text-right font-mono font-bold text-green-700">
                           ₹{editableEntries.reduce((s, e, ei) => {
