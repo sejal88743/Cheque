@@ -320,7 +320,7 @@ export default function Settings() {
 
       // Supabase: only update PAID bills (outstanding = 0) with cheque_date + selected bank_name
       const outstanding = previewOutstanding.get(split.billNo) ?? -1;
-      if (outstanding === 0 && selectedEntries.has(ei)) {
+      if (outstanding === 0) {
         try {
           await updateBillInSupabase(split.billNo, {
             cheque_date: entry.chequeDate,
@@ -577,7 +577,7 @@ export default function Settings() {
                           return (
                             <tr key={`${ei}-${bi}`} className={`border-b ${!selectedEntries.has(ei) ? "opacity-40" : ""} ${isMulti && !isFirstBill ? "bg-amber-50/40" : "hover:bg-slate-50/80"}`}>
                               {/* Checkbox — only on first bill row */}
-                              <td className="px-2 py-1 align-middle text-center">
+                              <td className="px-1 py-0.5 align-middle text-center">
                                 {isFirstBill && (
                                   <input
                                     type="checkbox"
@@ -592,7 +592,7 @@ export default function Settings() {
                                 )}
                               </td>
                               {/* Bill No — red if unpaid (outstanding > 0), green if paid */}
-                              <td className="px-2 py-1 font-mono font-bold align-middle whitespace-nowrap">
+                              <td className="px-1 py-0.5 font-mono font-bold align-middle whitespace-nowrap">
                                 <span className={
                                   outstanding == null ? "text-slate-400" :
                                   outstanding > 0 ? "text-red-600" : "text-green-700"
@@ -602,70 +602,70 @@ export default function Settings() {
                                 {isMulti && <span className="ml-1 text-[10px] text-amber-600 font-normal">(m)</span>}
                               </td>
                               {/* XLS Bank Name — read-only reference */}
-                              <td className="px-2 py-1 align-middle whitespace-nowrap">
+                              <td className="px-1 py-0.5 align-middle whitespace-nowrap">
                                 <span className="text-xs text-slate-500">{entry.bankName}</span>
                               </td>
                               {/* Select Bank — dropdown from Supabase/local bank list, first bill only editable */}
-                              <td className="px-1 py-1 align-middle">
+                              <td className="px-0.5 py-0.5 align-middle">
                                 {isFirstBill ? (
                                   <select
                                     value={rowBankSelections[ei] ?? ""}
                                     onChange={e => setRowBankSelections(prev => ({ ...prev, [ei]: e.target.value }))}
-                                    className="w-full min-w-[100px] bg-blue-50 border border-blue-200 rounded px-1 py-0.5 text-xs text-blue-900 focus:outline-none focus:border-blue-500"
+                                    className="w-full min-w-[100px] bg-blue-50 border border-blue-200 rounded px-1 py-0 text-xs text-blue-900 focus:outline-none focus:border-blue-500"
                                   >
                                     {(banks ?? []).map((b: { name: string; id: number }) => (
                                       <option key={b.id} value={b.name}>{b.name}</option>
                                     ))}
                                   </select>
                                 ) : (
-                                  <span className="text-xs text-blue-800 font-medium px-1.5">
+                                  <span className="text-xs text-blue-800 font-medium px-1">
                                     {rowBankSelections[ei] ?? entry.bankName}
                                   </span>
                                 )}
                               </td>
                               {/* Cheque No — editable on first, read-only on subsequent */}
-                              <td className="px-1 py-1 align-middle">
+                              <td className="px-0.5 py-0.5 align-middle">
                                 {isFirstBill ? (
                                   <input
                                     type="text"
                                     value={entry.chequeNo}
                                     onChange={e => updateEntry(ei, "chequeNo", e.target.value)}
-                                    className="w-full min-w-[60px] bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5 text-xs font-mono text-blue-900 focus:outline-none focus:border-blue-500 focus:bg-white"
+                                    className="w-full min-w-[60px] bg-blue-50 border border-blue-200 rounded px-1 py-0 text-xs font-mono text-blue-900 focus:outline-none focus:border-blue-500 focus:bg-white"
                                   />
                                 ) : (
-                                  <span className="text-xs font-mono text-blue-800 px-1.5">{entry.chequeNo}</span>
+                                  <span className="text-xs font-mono text-blue-800 px-1">{entry.chequeNo}</span>
                                 )}
                               </td>
                               {/* Cheque Date — editable on first, read-only on subsequent */}
-                              <td className="px-1 py-1 align-middle whitespace-nowrap">
+                              <td className="px-0.5 py-0.5 align-middle whitespace-nowrap">
                                 {isFirstBill ? (
                                   <input
                                     type="date"
                                     value={entry.chequeDate}
                                     onChange={e => updateEntry(ei, "chequeDate", e.target.value)}
-                                    className="w-full min-w-[110px] bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5 text-xs text-blue-900 focus:outline-none focus:border-blue-500 focus:bg-white"
+                                    className="w-full min-w-[110px] bg-blue-50 border border-blue-200 rounded px-1 py-0 text-xs text-blue-900 focus:outline-none focus:border-blue-500 focus:bg-white"
                                   />
                                 ) : (
-                                  <span className="text-xs text-blue-800 px-1.5">
+                                  <span className="text-xs text-blue-800 px-1">
                                     {entry.chequeDate ? new Date(entry.chequeDate).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' }) : ""}
                                   </span>
                                 )}
                               </td>
                               {/* Chq Amt — editable on first, read-only on subsequent */}
-                              <td className="px-1 py-1 align-middle">
+                              <td className="px-0.5 py-0.5 align-middle">
                                 {isFirstBill ? (
                                   <input
                                     type="number"
                                     value={entry.chequeAmount}
                                     onChange={e => updateEntry(ei, "chequeAmount", Number(e.target.value))}
-                                    className="w-full min-w-[70px] bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5 text-xs font-mono text-right text-blue-900 focus:outline-none focus:border-blue-500 focus:bg-white"
+                                    className="w-full min-w-[70px] bg-blue-50 border border-blue-200 rounded px-1 py-0 text-xs font-mono text-right text-blue-900 focus:outline-none focus:border-blue-500 focus:bg-white"
                                   />
                                 ) : (
-                                  <span className="text-xs font-mono text-blue-800 px-1.5 block text-right">{entry.chequeAmount.toLocaleString('en-IN')}</span>
+                                  <span className="text-xs font-mono text-blue-800 px-1 block text-right">{entry.chequeAmount.toLocaleString('en-IN')}</span>
                                 )}
                               </td>
                               {/* Bill Net Amt — from Supabase, read-only */}
-                              <td className="px-2 py-1 text-right font-mono align-middle text-slate-600">
+                              <td className="px-1 py-0.5 text-right font-mono align-middle text-slate-600">
                                 {outstandingLoading ? (
                                   <span className="text-muted-foreground">…</span>
                                 ) : billNetAmt != null ? (
@@ -675,7 +675,7 @@ export default function Settings() {
                                 )}
                               </td>
                               {/* Outstanding — from Supabase, read-only */}
-                              <td className="px-2 py-1 text-right font-mono align-middle">
+                              <td className="px-1 py-0.5 text-right font-mono align-middle">
                                 {outstandingLoading ? (
                                   <span className="text-muted-foreground">…</span>
                                 ) : outstanding != null ? (
@@ -687,16 +687,16 @@ export default function Settings() {
                                 )}
                               </td>
                               {/* Paid amount — per-bill editable */}
-                              <td className="px-1 py-1 align-middle">
+                              <td className="px-0.5 py-0.5 align-middle">
                                 <input
                                   type="number"
                                   value={paidAmt}
                                   onChange={e => setSplitAmt(ei, split.billNo, Number(e.target.value))}
-                                  className="w-full min-w-[70px] bg-green-50 border border-green-200 rounded px-1.5 py-0.5 text-xs font-mono text-right text-green-900 font-semibold focus:outline-none focus:border-green-500 focus:bg-white"
+                                  className="w-full min-w-[70px] bg-green-50 border border-green-200 rounded px-1 py-0 text-xs font-mono text-right text-green-900 font-semibold focus:outline-none focus:border-green-500 focus:bg-white"
                                 />
                               </td>
                               {/* Save button — only on first bill row */}
-                              <td className="px-1 py-1 align-middle text-center">
+                              <td className="px-1 py-0.5 align-middle text-center">
                                 {isFirstBill && (() => {
                                   const st = rowSaveStatus[ei];
                                   if (st === 'saving') return <Loader2 className="h-3 w-3 animate-spin text-blue-600 mx-auto" />;

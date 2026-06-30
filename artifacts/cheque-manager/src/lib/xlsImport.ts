@@ -111,17 +111,27 @@ function findTableHeaders(rows: unknown[][]): Array<{
       if (cell === 'S.NO' && !seenCols.has(c)) {
         const nextHeader = String(row[c + 1] ?? '').trim().toUpperCase();
         if (nextHeader.includes('AMOUNT') || nextHeader.includes('AMT')) {
-          // Find dateCol: scan remaining headers for "DATE" or "CHQ DATE"
-          let dateCol = -1;
-          for (let dc = c + 5; dc < Math.min(row.length, c + 12); dc++) {
-            const hdr = String(row[dc] ?? '').trim().toUpperCase();
-            if (hdr.includes('DATE') || hdr.includes('CHQ') || hdr.includes('CHEQ')) {
-              dateCol = dc;
-              break;
-            }
-          }
           seenCols.add(c);
-          tables.push({ snCol: c, amtCol: c + 1, bankCol: c + 2, chqCol: c + 3, billCol: c + 4, partyCol: c + 5, dateCol });
+
+          // Scan remaining headers to detect column positions by name
+          let bankCol = -1, chqCol = -1, billCol = -1, partyCol = -1, dateCol = -1;
+          for (let dc = c + 2; dc < Math.min(row.length, c + 14); dc++) {
+            const hdr = String(row[dc] ?? '').trim().toUpperCase().replace(/[\s.]+/g, '');
+            if (bankCol < 0 && (hdr.includes('BANK') || hdr === 'BNK')) bankCol = dc;
+            else if (chqCol < 0 && (hdr.includes('CHQ') || hdr.includes('CHEQ') || hdr === 'CHEQUENO' || hdr === 'CHQNO')) chqCol = dc;
+            else if (billCol < 0 && (hdr.includes('BILL') || hdr === 'BILLNO')) billCol = dc;
+            else if (partyCol < 0 && (hdr.includes('PARTY') || hdr.includes('NAME'))) partyCol = dc;
+            if (dateCol < 0 && (hdr.includes('DATE') || hdr === 'CHQDATE' || hdr === 'CHEQDATE')) dateCol = dc;
+          }
+
+          // Fallback to fixed offsets if header detection misses a column
+          if (bankCol < 0) bankCol = c + 2;
+          if (chqCol < 0 && billCol < 0) { chqCol = c + 3; billCol = c + 4; }
+          else if (chqCol < 0) chqCol = billCol === c + 3 ? c + 4 : c + 3;
+          else if (billCol < 0) billCol = chqCol === c + 3 ? c + 4 : c + 3;
+          if (partyCol < 0) partyCol = c + 5;
+
+          tables.push({ snCol: c, amtCol: c + 1, bankCol, chqCol, billCol, partyCol, dateCol });
         }
       }
     }
