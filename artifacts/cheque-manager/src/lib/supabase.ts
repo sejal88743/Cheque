@@ -103,48 +103,70 @@ export async function updateBillInSupabase(
   if (error) throw error;
 }
 
-export async function batchLookupOutstandingAmounts(billNos: string[]): Promise<Map<string, number>> {
-  if (billNos.length === 0) return new Map();
+async function batchFetchBillRows(
+  billNos: string[],
+  selectCols: string
+): Promise<Array<Record<string, unknown>>> {
+  if (billNos.length === 0) return [];
 
-  const map = new Map<string, number>();
-
-  // Step 1: Exact match
   const { data: exactData } = await supabase
     .from('bills')
-    .select('bill_no, outstanding_amount')
+    .select(selectCols)
     .in('bill_no', billNos);
 
-  const foundExact = new Set<string>();
-  for (const row of exactData ?? []) {
+  const found = new Set<string>();
+  const rows: Array<Record<string, unknown>> = [];
+  for (const row of (exactData ?? []) as unknown as Array<Record<string, unknown>>) {
     if (row.bill_no != null) {
-      map.set(String(row.bill_no), row.outstanding_amount ?? 0);
-      foundExact.add(String(row.bill_no));
+      rows.push(row);
+      found.add(String(row.bill_no));
     }
   }
 
-  // Step 2: Suffix ilike match for bills not found by exact match
-  // Handles cases like XLS has "7909" but Supabase has "GST7909"
-  const unfound = billNos.filter(b => !foundExact.has(b));
+  const unfound = billNos.filter(b => !found.has(b));
   if (unfound.length > 0) {
     const orFilter = unfound.map(b => `bill_no.ilike.%${b}`).join(',');
     const { data: suffixData } = await supabase
       .from('bills')
-      .select('bill_no, outstanding_amount')
+      .select(selectCols)
       .or(orFilter);
-
-    for (const row of suffixData ?? []) {
+    for (const row of (suffixData ?? []) as unknown as Array<Record<string, unknown>>) {
       if (row.bill_no != null) {
-        const origBillNo = unfound.find(b =>
+        const orig = unfound.find(b =>
           String(row.bill_no).endsWith(b) || String(row.bill_no) === b
         );
-        if (origBillNo && !map.has(origBillNo)) {
-          map.set(origBillNo, row.outstanding_amount ?? 0);
-        }
+        if (orig) rows.push({ ...row, _origBillNo: orig });
       }
     }
   }
+  return rows;
+}
 
+export async function batchLookupOutstandingAmounts(billNos: string[]): Promise<Map<string, number>> {
+  const rows = await batchFetchBillRows(billNos, 'bill_no, outstanding_amount');
+  const map = new Map<string, number>();
+  for (const row of rows) {
+    const key = String((row._origBillNo ?? row.bill_no) as string);
+    if (!map.has(key)) map.set(key, (row.outstanding_amount as number) ?? 0);
+  }
   return map;
+}
+
+export async function batchLookupBillData(billNos: string[]): Promise<{
+  outstandingMap: Map<string, number>;
+  billNetMap: Map<string, number | null>;
+}> {
+  const rows = await batchFetchBillRows(billNos, 'bill_no, outstanding_amount, bill_net_amt');
+  const outstandingMap = new Map<string, number>();
+  const billNetMap = new Map<string, number | null>();
+  for (const row of rows) {
+    const key = String((row._origBillNo ?? row.bill_no) as string);
+    if (!outstandingMap.has(key)) {
+      outstandingMap.set(key, (row.outstanding_amount as number) ?? 0);
+      billNetMap.set(key, (row.bill_net_amt as number | null) ?? null);
+    }
+  }
+  return { outstandingMap, billNetMap };
 }
 
 export async function lookupLinkedBillsByChequNo(chequeNo: string, bankName: string): Promise<SupaBill[]> {
@@ -164,16 +186,13 @@ export async function updateBillFromImport(
     cheque_date: string;
     bank_name: string;
     cheque_no: string;
-    cheque_amount: number;
-    collected_amount: number;
-    payment_mode: string;
     payment_date: string;
   }
 ): Promise<void> {
   const resolvedBillNo = await resolveBillNo(billNo);
   const { error } = await supabase
     .from('bills')
-    .update({ ...data, outstanding_amount: 0 })
+    .update(data)
     .eq('bill_no', resolvedBillNo);
   if (error) console.warn('Supabase bill update warning:', billNo, error.message);
 }
